@@ -206,7 +206,7 @@ class ChatApp:
             messagebox.showerror("Error", "Ollama no está corriendo")
 
     def stop_message(self):
-        showerror("Detenido", "El proceso ha sido detenido")
+        print("Detenido", "El proceso ha sido detenido")
         self.btnSend.config(text='Enviar', state='normal')
         self.btnStop.config(state='disabled')
         self.remove_thinking_label()
