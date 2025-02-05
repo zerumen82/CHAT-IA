@@ -42,7 +42,7 @@ class ChatApp:
         self.btnSend=None
         self.selected_model = tk.StringVar()
         # Cargar el ícono de copiar
-        self.copy_icon = Image.open("copil.png")
+        self.copy_icon = Image.open("D:\PROJECTS\OLLAMACHATI\dist\CHAT-IA\_internal\copil.png")
         self.copy_icon.thumbnail((20, 20))
         self.copy_icon = ImageTk.PhotoImage(self.copy_icon)
         self.setup_ui()
@@ -64,7 +64,7 @@ class ChatApp:
                                 widget.config(width=new_width)
     def setup_ui(self):
         self.root.title("Chat-IA")
-        self.root.iconphoto(False, tk.PhotoImage(file="mini.png"))
+        self.root.iconphoto(False, tk.PhotoImage(file="D:\PROJECTS\OLLAMACHATI\dist\CHAT-IA\_internal\mini.png"))
         self.root.geometry("1000x700")
         self.root.configure(bg=COLORS["bg"])
         style = ttk.Style()

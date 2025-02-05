@@ -28,7 +28,7 @@ exe = EXE(
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
-    icon='mini.png'  # Asegúrate de que el ícono esté en el mismo directorio
+    icon='D:\PROJECTS\OLLAMACHATI\dist\CHAT-IA\_internal\mini.png'  # Asegúrate de que el ícono esté en el mismo directorio
 )
 
 coll = COLLECT(
