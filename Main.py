@@ -31,7 +31,7 @@ FONT_CODE = ("Courier New", 10)
 
 class ChatApp:
     def __init__(self, root):
-        self.threadthis=None
+        self.cutAffter=False
         self.root = root
         self.left_row = 0  # Track filas columna izquierda
         self.right_row = 2
@@ -130,14 +130,24 @@ class ChatApp:
         self.input_field.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.input_field.bind("<Return>", self.on_enter)
 
-        btnSend = tk.Button(footer,
+        self.btnSend = tk.Button(footer,
                         bg='#24C920',
                         fg='#000000',
                         relief='flat',
                         text='Enviar',
                         command=self.send_message,
-                        font=FONT_BOLD)
-        btnSend.pack(side=tk.LEFT)
+                        font=FONT_BOLD,
+                        state='normal')
+        self.btnSend.pack(side=tk.LEFT)
+        self.btnStop = tk.Button(footer,
+                        bg='#DC3545',
+                        fg='white',
+                        relief='flat',
+                        text='Detener',
+                        command=self.stop_message,
+                        font=FONT_BOLD,
+                        state='disabled')
+        self.btnStop.pack(side=tk.LEFT)
         # # Botón enviar
         # ttk.Button(
         #     footer,
@@ -196,15 +206,18 @@ class ChatApp:
             messagebox.showerror("Error", "Ollama no está corriendo")
 
     def stop_message(self):
-        self.threadthis.close()
         showerror("Detenido", "El proceso ha sido detenido")
-        self.btnSend.config(text='Enviar', command=self.send_message,bg='#24C920',fg='black')
+        self.btnSend.config(text='Enviar', state='normal')
+        self.btnStop.config(state='disabled')
+        self.remove_thinking_label()
+
 
     def send_message(self):
+        self.btnSend.config(text="Enviando..",state='disabled')
+        self.btnStop.config(state='normal')
         text = self.input_field.get("1.0", tk.END).strip()
         if not text and not self.current_images:
             return
-        self.btnSend.config(text='Detener', command=self.stop_message,bg='#DC3545',fg='white')
         # Mostrar mensaje usuario
         self.display_message(text, "user")
 
@@ -270,9 +283,10 @@ class ChatApp:
             self.thinking_label = None
 
     def display_message(self, text, sender):
-        self.btnSend.config(text='Enviar', command=self.send_message,bg='#24C920',fg='black')
         self.chat_area.config(state=tk.NORMAL)
-
+        if self.cutAffter:
+            self.chat_area.delete("1.0", tk.END)
+            self.cutAffter=False
         # Creamos el contenedor interno una sola vez, organizado en dos columnas
         if not hasattr(self, 'chat_container'):
             self.chat_container = tk.Frame(self.chat_area, bg=COLORS["bg"])
