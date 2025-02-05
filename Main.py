@@ -11,22 +11,24 @@ from tkinter import Canvas
 # Configuración estilo Bootstrap
 COLORS = {
     "primary": "#007BFF",
-    "imageBut": "#204BC9",
-    "sendBut": "#24C920",
-    "modelBut": "#C99F20",
+    "imageBut": "#460a50",
+    "sendBut": "#0a501b",
+    "stopBut": "#500a12",
+    "modelBut": "#50480a",
     "secondary": "#6C757D",
     "success": "#28A745",
     "danger": "#DC3545",
     "light": "#F8F9FA",
-    "dark": "#343A40",
-    "bg": "#f3ecec",
-    "header_bg": "#F1F1F1",
-    "footer_bg": "#F1F1F1"
+    "dark": "#5c5c5c",
+    "input_bg": "#252525",
+    "bg": "#000000",
+    "header_bg": "#000000",
+    "footer_bg": "#000000"
 }
 
-FONT = ("Arial", 12)
-FONT_BOLD = ("Arial", 12, "bold")
-FONT_TEXT = ("Helvetica", 11)
+FONT = ("Tahoma", 12)
+FONT_BOLD = ("Tahoma", 12, "bold")
+FONT_TEXT = ("Arial", 11)
 FONT_CODE = ("Courier New", 10)
 
 class ChatApp:
@@ -73,7 +75,7 @@ class ChatApp:
         # Estilos personalizados
 
         # Selector de modelos
-        ttk.Label(header, text="Modelo:", style="Header.TLabel").pack(side=tk.LEFT)
+        ttk.Label(header, text="Modelo:", style="Header.TLabel",foreground="white").pack(side=tk.LEFT)
         self.model_dropdown = ttk.Combobox(
             header,
             textvariable=self.selected_model,
@@ -95,7 +97,7 @@ class ChatApp:
             wrap=tk.WORD,
             state="disabled",
             font=FONT,
-            bg=COLORS["bg"],
+            bg=COLORS["input_bg"],
             padx=15,
             pady=15
         )
@@ -123,7 +125,8 @@ class ChatApp:
             font=FONT,
             relief="flat",
             highlightthickness=1,
-            bg="white",
+            bg=COLORS["input_bg"],
+            fg="white",
             highlightcolor=COLORS["primary"]
 
         )
@@ -131,8 +134,8 @@ class ChatApp:
         self.input_field.bind("<Return>", self.on_enter)
 
         self.btnSend = tk.Button(footer,
-                        bg='#24C920',
-                        fg='#000000',
+                        bg=COLORS["sendBut"],
+                        fg='white',
                         relief='flat',
                         text='Enviar',
                         command=self.send_message,
@@ -140,7 +143,7 @@ class ChatApp:
                         state='normal')
         self.btnSend.pack(side=tk.LEFT)
         self.btnStop = tk.Button(footer,
-                        bg='#DC3545',
+                        bg=COLORS["stopBut"],
                         fg='white',
                         relief='flat',
                         text='Detener',
@@ -222,7 +225,7 @@ class ChatApp:
         self.display_message(text, "user")
 
         # Mostrar "pensando" parpadeando
-        self.thinking_label = tk.Label(self.chat_area, text="pensando", font=FONT_BOLD, fg=COLORS["primary"])
+        self.thinking_label = tk.Label(self.chat_area, text="pensando", font=FONT_BOLD, fg=COLORS["primary"], bg=COLORS["input_bg"])
         self.chat_area.window_create(tk.END, window=self.thinking_label)
         self.blink_thinking()
         # Limpiar inputs
@@ -240,7 +243,7 @@ class ChatApp:
     def blink_thinking(self):
         if self.thinking_label:
             current_color = self.thinking_label.cget("fg")
-            next_color = COLORS["primary"] if current_color == COLORS["bg"] else COLORS["bg"]
+            next_color = COLORS["primary"] if current_color == COLORS["input_bg"] else COLORS["input_bg"]
             self.thinking_label.config(fg=next_color)
             self.root.after(500, self.blink_thinking)
 
@@ -289,7 +292,7 @@ class ChatApp:
             self.cutAffter=False
         # Creamos el contenedor interno una sola vez, organizado en dos columnas
         if not hasattr(self, 'chat_container'):
-            self.chat_container = tk.Frame(self.chat_area, bg=COLORS["bg"])
+            self.chat_container = tk.Frame(self.chat_area, bg=COLORS["input_bg"])
             # Se configuran dos columnas que se expanden de forma equitativa
             self.chat_container.grid_columnconfigure(0, weight=1)
             self.chat_container.grid_columnconfigure(1, weight=1)
@@ -298,8 +301,8 @@ class ChatApp:
 
         is_bot = sender == "bot"
         # Definimos el fondo: para el bot (verde claro) y para el usuario (blanco)
-        bg_color = "#DCF8C6" if is_bot else "#FFFFFF"
-        fg_color = "#000000"
+        bg_color = "#ccc356" if is_bot else "#b4b9b5"
+        fg_color = "black"
 
         # Creamos la burbuja del mensaje
         bubble = tk.Frame(self.chat_container, bg=bg_color, padx=10, pady=5, relief="solid", bd=1)
