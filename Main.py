@@ -130,14 +130,14 @@ class ChatApp:
         self.input_field.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         self.input_field.bind("<Return>", self.on_enter)
 
-        self.btnSend = tk.Button(footer,
+        btnSend = tk.Button(footer,
                         bg='#24C920',
                         fg='#000000',
                         relief='flat',
                         text='Enviar',
                         command=self.send_message,
                         font=FONT_BOLD)
-        self.btnSend.pack(side=tk.LEFT)
+        btnSend.pack(side=tk.LEFT)
         # # Botón enviar
         # ttk.Button(
         #     footer,
