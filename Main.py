@@ -1,181 +1,404 @@
+import re
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext, filedialog
-from tkinter.messagebox import showerror
-
 import requests
 import base64
 import threading
 from PIL import Image, ImageTk
-import re
-from tkinter import Canvas
+
 # Configuración estilo Bootstrap
 COLORS = {
-    "primary": "#007BFF",
-    "imageBut": "#460a50",
-    "sendBut": "#0a501b",
-    "stopBut": "#500a12",
-    "modelBut": "#50480a",
-    "secondary": "#6C757D",
-    "success": "#28A745",
-    "danger": "#DC3545",
-    "light": "#F8F9FA",
-    "dark": "#5c5c5c",
-    "input_bg": "#252525",
-    "bg": "#000000",
-    "header_bg": "#000000",
-    "footer_bg": "#000000"
+    "primary": "#007BFF",        # Azul primario
+    "user_bg": "#2d6099",        # Fondo para mensajes del usuario
+    "bot_bg": "#1e1e1e",         # Fondo para mensajes del bot
+    "code_bg": "#2d2d2d",        # Fondo para bloques de código
+    "text_fg": "#ffffff",        # Color de texto principal
+    "code_fg": "#d4d4d4",        # Color de texto en bloques de código
+    "button_bg": "#3a3a3a",      # Fondo de botones
+    "danger": "#DC3545",         # Color para errores o advertencias
+    "scroll_bg": "#404040",      # Fondo de la barra de scroll
+    "scroll_arrow": "#808080",   # Color de las flechas del scroll
+    "input_bg": "#686868",       # Fondo del campo de entrada de texto
+    "header_bg": "#686868",      # Fondo del encabezado
+    "footer_bg": "#686868",       # Fondo del pie de página
+    "BG": "#686868"
 }
 
-FONT = ("Tahoma", 12)
-FONT_BOLD = ("Tahoma", 12, "bold")
-FONT_TEXT = ("Arial", 11)
-FONT_CODE = ("Courier New", 10)
+FONTS = {
+    "text": ("Segoe UI", 13),
+    "bold": ("Segoe UI", 13, "bold"),
+    "italic": ("Segoe UI", 13, "italic"),
+    "code": ("Consolas", 12),
+    "small": ("Segoe UI", 11)
+}
 
 class ChatApp:
     def __init__(self, root):
-        self.cutAffter=False
-        self.root = root
-        self.left_row = 0  # Track filas columna izquierda
-        self.right_row = 2
-        self.current_images = []
-        self.available_models = []
-        self.btnSend=None
-        self.selected_model = tk.StringVar()
-        # Cargar el ícono de copiar
         self.copy_icon = Image.open("D:\PROJECTS\OLLAMACHATI\dist\CHAT-IA\_internal\copil.png")
         self.copy_icon.thumbnail((20, 20))
         self.copy_icon = ImageTk.PhotoImage(self.copy_icon)
+        self.root = root
+        self.current_images = []
+        self.available_models = []
+        self.selected_model = tk.StringVar()
+        self.abort_request = False
+        self.active_thread = None
         self.setup_ui()
+        self.setup_styles()
+        self.setup_bindings()
         self.load_models()
 
-    def on_chat_resize(self, event):
-        """Actualizar contenido al redimensionar ventana"""
-        for child in self.chat_area.winfo_children():
-            if isinstance(child, tk.Frame):
-                # Ajustar ancho del contenedor principal
-                child.config(width=event.width)
-                for bubble in child.winfo_children():
-                    if isinstance(bubble, tk.Frame):
-                        # Solo para widgets Text (código formateado)
-                        for widget in bubble.winfo_children():
-                            if isinstance(widget, tk.Text):
-                                # Ajustar ancho del texto (no wraplength)
-                                new_width = int(event.width * 0.4) // 7  # Caracteres aproximados
-                                widget.config(width=new_width)
     def setup_ui(self):
         self.root.title("Chat-IA")
         self.root.iconphoto(False, tk.PhotoImage(file="D:\PROJECTS\OLLAMACHATI\dist\CHAT-IA\_internal\mini.png"))
-        self.root.geometry("1000x700")
-        self.root.configure(bg=COLORS["bg"])
-        style = ttk.Style()
-        style.configure("Chat.TFrame", background=COLORS["bg"])
-        # Panel superior
-        header = ttk.Frame(self.root, style="Header.TFrame")
-        header.pack(fill=tk.X, padx=10, pady=5)
-        # Estilos personalizados
+        self.root.geometry("1700x900")
+        self.root.configure(bg=COLORS["header_bg"])
+        self.root.resizable(False, False)  # Deshabilitar maximizar
 
-        # Selector de modelos
-        ttk.Label(header, text="Modelo:", style="Header.TLabel",foreground="white").pack(side=tk.LEFT)
-        self.model_dropdown = ttk.Combobox(
-            header,
-            textvariable=self.selected_model,
-            state="readonly"
-        )
+        # Header con selector de modelos
+        header = ttk.Frame(self.root)
+        header.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(header, text="Modelo:", font=FONTS["bold"]).pack(side=tk.LEFT)
+        self.model_dropdown = ttk.Combobox(header, textvariable=self.selected_model, state="readonly")
         self.model_dropdown.pack(side=tk.LEFT, padx=5)
 
-        tk.Button(header,
-                  bg=COLORS["modelBut"],
-                  fg='white',
-                  relief='flat',
-                  text="🔄",
-                  command=self.load_models,
-                  font=FONT_BOLD).pack(side=tk.LEFT)
+        ttk.Button(header, text="↻", width=3, command=self.load_models).pack(side=tk.LEFT)
 
         # Área de chat
-        self.chat_area = scrolledtext.ScrolledText(
-            self.root,
-            wrap=tk.WORD,
-            state="disabled",
-            font=FONT,
-            bg=COLORS["input_bg"],
-            padx=15,
-            pady=15
-        )
-        self.chat_area.bind("<Configure>", self.on_chat_resize)
-        self.chat_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        self.chat_area.bind("<Control-c>", self.copy_selection)
+        self.chat_container = tk.Canvas(self.root, bg=COLORS["bot_bg"], highlightthickness=0)
+        self.chat_scroll = ttk.Scrollbar(self.root, orient="vertical", command=self.chat_container.yview)
+        self.chat_container.configure(yscrollcommand=self.chat_scroll.set)
+
+        self.chat_frame = ttk.Frame(self.chat_container)
+        self.chat_window = self.chat_container.create_window((0, 0), window=self.chat_frame, anchor="nw")
+
+        self.chat_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.chat_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
         # Panel inferior
-        footer = ttk.Frame(self.root, style="Footer.TFrame")
+        footer = ttk.Frame(self.root)
+        footer.configure(style="TFrame")
         footer.pack(fill=tk.X, padx=10, pady=10)
 
-        # Botón adjuntar imágenes
-        btn = tk.Button(footer,
-                        bg='#204BC9',
-                        fg='white',
-                        relief='flat',
-                        text='Imagen',
-                        command=self.attach_image,
-                        font=FONT_BOLD)
-        btn.pack(side=tk.LEFT)
+        # Botón de adjuntar imagen
+        self.btn_attach = ttk.Button(footer, text="📷 Imagen", command=self.attach_image)
+        self.btn_attach.pack(side=tk.LEFT, padx=5)
 
         # Entrada de texto
-        self.input_field = tk.Text(
-            footer,
-            height=4,
-            font=FONT,
-            relief="flat",
-            highlightthickness=1,
-            bg=COLORS["input_bg"],
-            fg="white",
-            highlightcolor=COLORS["primary"]
+        self.input_field = tk.Text(footer, height=4, wrap=tk.WORD, bg=COLORS["code_bg"],
+                                   fg=COLORS["text_fg"], font=FONTS["text"], relief="flat")
+        self.input_field.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
 
-        )
-        self.input_field.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        self.input_field.bind("<Return>", self.on_enter)
+        # Botones de acción
+        btn_frame = ttk.Frame(footer)
+        btn_frame.configure(style="TFrame")
+        btn_frame.pack(side=tk.RIGHT)
 
-        self.btnSend = tk.Button(footer,
-                        bg=COLORS["sendBut"],
-                        fg='white',
-                        relief='flat',
-                        text='Enviar',
-                        command=self.send_message,
-                        font=FONT_BOLD,
-                        state='normal')
-        self.btnSend.pack(side=tk.LEFT)
-        self.btnStop = tk.Button(footer,
-                        bg=COLORS["stopBut"],
-                        fg='white',
-                        relief='flat',
-                        text='Detener',
-                        command=self.stop_message,
-                        font=FONT_BOLD,
-                        state='disabled')
-        self.btnStop.pack(side=tk.LEFT)
-        # # Botón enviar
-        # ttk.Button(
-        #     footer,
-        #     text="Enviar",
-        #     command=self.send_message,
-        #     style="Send.TButton"
-        # ).pack(side=tk.LEFT)
+        self.btn_send = ttk.Button(btn_frame, text="Enviar", command=self.send_message)
+        self.btn_send.pack(pady=2, fill=tk.X)
 
-        # Previsualización imágenes
-        self.preview_frame = ttk.Frame(self.root)
-        self.preview_frame.pack(fill=tk.X, padx=10, pady=5)
+        self.btn_stop = ttk.Button(btn_frame, text="⏹ Detener", command=self.stop_request,
+                                   state="disabled", style="Danger.TButton")
+        self.btn_stop.pack(pady=2, fill=tk.X)
+
+        # Animación de pensando
+        self.thinking_label = ttk.Label(self.root, text="", font=FONTS["small"])
+        self.loading_dots = 0
+
+    def setup_styles(self):
         style = ttk.Style()
-        style.configure("Header.TFrame", background=COLORS["header_bg"])
-        style.configure("Header.TLabel", background=COLORS["header_bg"], font=FONT_BOLD)
-        style.configure("Footer.TFrame", background=COLORS["footer_bg"])
-    def copy_selection(self, event):
-        try:
-            self.root.clipboard_clear()
-            self.root.clipboard_append(self.chat_area.selection_get())
-        except tk.TclError:
-            pass
+        style.theme_use("clam")
+        style.configure("TButton", background=COLORS["button_bg"], foreground=COLORS["text_fg"])
+        style.map("TButton",
+                  background=[("active", COLORS["button_bg"]), ("disabled", "#505050")],
+                  foreground=[("active", "white"), ("disabled", "#808080")])
+
+        style.configure("Danger.TButton", background=COLORS["danger"], foreground="white")
+        style.map("Danger.TButton",
+                  background=[("active", COLORS["danger"]), ("disabled", "#8B0000")])
+
+        style.configure("TCombobox", fieldbackground=COLORS["code_bg"], background=COLORS["code_bg"],foreground=COLORS["text_fg"])
+        style.map("TCombobox", fieldbackground=[("focus", COLORS["code_bg"])])
+        style.configure("TFrame", background=COLORS["bot_bg"])
+        style.configure("TLabel", background=COLORS["bot_bg"], foreground=COLORS["text_fg"])
+        style.configure("Error.TFrame", background=COLORS["danger"])
+
+        style = ttk.Style()
+        style.configure("Think.TFrame",
+                        background=COLORS["code_bg"],
+                        borderwidth=1,
+                        relief="solid")
+
+        style.configure("Think.TButton",
+                        background=COLORS["code_bg"],
+                        foreground=COLORS["text_fg"],
+                        font=FONTS["small"],
+                        padding=5)
+
+        style.map("Think.TButton",
+                  background=[("active", COLORS["code_bg"])],
+                  relief=[("active", "sunken")])
+
+        style.configure("ThinkContent.TFrame",
+                        background=COLORS["code_bg"],
+                        padding=10)
+
+    def setup_bindings(self):
+        # Enlace de teclado para Enter/Shift+Enter
+        self.input_field.bind("<Return>", self.on_enter)
+        self.input_field.bind("<Shift-Return>", lambda e: self.input_field.insert(tk.END, "\n"))
+
+        # Enlaces para scroll del chat
+        self.chat_container.bind("<Configure>", self.on_canvas_configure)
+        self.chat_frame.bind("<Configure>", self.on_frame_configure)
+
+        # Enlace para copiar con Ctrl+C
+        self.root.bind_all("<Control-c>", self.copy_from_chat)
+
+        # Enlace para detener con Escape
+        self.root.bind("<Escape>", lambda e: self.stop_request())
+
     def on_enter(self, event):
-        if not event.state & (0x0001 | 0x0004):  # Control/Shift
+        if not event.state & 0x1:  # Controlar Enter sin Shift
             self.send_message()
             return "break"
+
+    def on_canvas_configure(self, event):
+        self.chat_container.itemconfig(self.chat_window, width=event.width)
+
+    def on_frame_configure(self, event):
+        self.chat_container.configure(scrollregion=self.chat_container.bbox("all"))
+
+    def copy_from_chat(self, event):
+        try:
+            widget = self.root.focus_get()
+            if isinstance(widget, tk.Text):
+                selected = widget.selection_get()
+                self.root.clipboard_clear()
+                self.root.clipboard_append(selected)
+        except tk.TclError:
+            pass
+
+    def create_message_bubble(self, text, is_user=True):
+        frame = ttk.Frame(self.chat_frame, style="User.TFrame" if is_user else "Bot.TFrame")
+        frame.pack(pady=10, padx=20, anchor=tk.E if is_user else tk.W)
+
+        # Procesar contenido
+        self.process_content(frame, text, is_user)
+
+        # Botón de copiar
+        copy_btn = ttk.Button(frame, text="📋", width=3,
+                              command=lambda: self.copy_text(text))
+        copy_btn.pack(side=tk.RIGHT if is_user else tk.LEFT, padx=5)
+
+        self.chat_container.yview_moveto(1.0)
+
+    def process_content(self, parent, text, is_user):
+        # Dividir en bloques de código y texto
+        blocks = re.split(r'(```.*?```)', text, flags=re.DOTALL)
+
+        for block in blocks:
+            if block.startswith('```') and block.endswith('```'):
+                code_content = block[3:-3].strip()
+                self.create_code_block(parent, code_content, is_user)
+            else:
+                self.create_text_block(parent, block, is_user)
+
+    def create_code_block(self, parent, content, is_user):
+        code_frame = ttk.Frame(parent, style="Code.TFrame")
+        code_frame.pack(fill=tk.X, pady=5)
+
+        code_text = scrolledtext.ScrolledText(code_frame, wrap=tk.NONE,
+                                              bg=COLORS["code_bg"], fg=COLORS["code_fg"],
+                                              font=FONTS["code"], height=min(15, content.count('\n') + 1))
+        code_text.insert(tk.END, content)
+        code_text.configure(state=tk.DISABLED)
+        code_text.pack(fill=tk.X)
+
+    def display_message(self, text, sender):
+        """
+        Muestra un mensaje en el chat, con soporte para el tag <think> como desplegable.
+        """
+        is_bot = (sender == "bot")
+
+        if "<think>" in text and "</think>" in text:
+            think_match = re.search(r'<think>(.*?)</think>', text, re.DOTALL)
+            if think_match:
+                think_content = think_match.group(1).strip()
+                text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+
+                # Crear desplegable
+                think_frame = ttk.Frame(self.chat_frame, style="Think.TFrame")
+                think_frame.pack(fill=tk.X, pady=5, padx=20, anchor=tk.W if is_bot else tk.E)
+
+                # 1. Crear el botón SIN comando primero
+                toggle_button = ttk.Button(
+                    think_frame,
+                    text="💭 Mostrar pensamiento",
+                    style="Think.TButton"
+                )
+
+                # 2. Crear el frame de contenido
+                content_frame = ttk.Frame(think_frame, style="ThinkContent.TFrame")
+                self.create_text_block(content_frame, think_content, is_bot)
+                content_frame.pack_forget()
+
+                # 3. Añadir el comando DESPUÉS de crear el botón
+                toggle_button.config(command=lambda: self.toggle_think_content(content_frame, toggle_button))
+
+                toggle_button.pack(fill=tk.X)
+
+        if text.strip():
+            self.create_message_bubble(text, is_bot)
+
+    def toggle_think_content(self, content_frame, toggle_button):
+        """
+        Alterna la visibilidad del contenido de <think>.
+        """
+        if content_frame.winfo_ismapped():
+            content_frame.pack_forget()
+            toggle_button.config(text="💭 Mostrar pensamiento")
+        else:
+            content_frame.pack(fill=tk.X)
+            toggle_button.config(text="💭 Ocultar pensamiento")
+
+    def create_text_block(self, parent, text, is_bot):
+        """
+        Crea un bloque de texto con formato.
+        """
+        text_frame = ttk.Frame(parent)
+        text_frame.pack(fill=tk.X, pady=5)
+
+        text_widget = tk.Text(
+            text_frame,
+            wrap=tk.WORD,
+            bg=COLORS["bot_bg"] if is_bot else COLORS["user_bg"],
+            fg=COLORS["text_fg"],
+            font=FONTS["text"],
+            padx=10,
+            pady=5,
+            relief="flat",
+            height=self.calculate_height(text)
+        )
+        self.insert_formatted_text(text_widget, text)
+        text_widget.config(state=tk.DISABLED)
+        text_widget.pack(fill=tk.X)
+
+    def insert_formatted_text(self, widget, text):
+        # Formatear texto con markdown básico
+        self.tag_patterns = {
+            'bold': (r'\*\*(.*?)\*\*', FONTS["bold"]),
+            'italic': (r'\*(.*?)\*', FONTS["italic"]),
+            'code': (r'`(.*?)`', FONTS["code"])
+        }
+
+        widget.delete("1.0", tk.END)
+        text = re.sub(r'(```.*?```)', '', text, flags=re.DOTALL)  # Eliminar bloques de código
+
+        # Insertar texto y aplicar formatos
+        widget.mark_set("insert", "1.0")
+        for line in text.split('\n'):
+            for tag, (pattern, font) in self.tag_patterns.items():
+                for match in re.finditer(pattern, line):
+                    start, end = match.span()
+                    before = line[:start]
+                    content = match.group(1)
+                    after = line[end:]
+
+                    widget.insert("insert", before)
+                    widget.insert("insert", content, (tag,))
+                    line = after
+
+            widget.insert("insert", line + '\n')
+
+        # Configurar tags
+        for tag, (_, font) in self.tag_patterns.items():
+            widget.tag_configure(tag, font=font)
+
+    def calculate_height(self, text):
+        lines = text.count('\n') + 1
+        return min(max(lines, 3), 15)
+
+    def copy_text(self, text):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+
+    def send_message(self):
+        user_input = self.input_field.get("1.0", tk.END).strip()
+        if not user_input and not self.current_images:
+            return
+
+        self.abort_request = False
+        self.btn_send.config(state="disabled")
+        self.btn_stop.config(state="enabled")
+        self.create_message_bubble(user_input, is_user=True)
+        self.input_field.delete("1.0", tk.END)
+        self.start_thinking_animation()
+
+        self.active_thread = threading.Thread(
+            target=self.process_response,
+            args=(user_input, [img["base64"] for img in self.current_images]),
+            daemon=True
+        )
+        self.active_thread.start()
+        self.current_images.clear()
+
+    def stop_request(self):
+        self.abort_request = True
+        self.btn_stop.config(state="disabled")
+        self.btn_send.config(state="enabled")
+        self.stop_thinking_animation()
+
+    def process_response(self, prompt, images):
+        try:
+            payload = {
+                "model": self.selected_model.get(),
+                "prompt": prompt,
+                "images": images,
+                "stream": False
+            }
+
+            response = requests.post(
+                "http://localhost:11434/api/generate",
+                json=payload
+            )
+            response.raise_for_status()
+
+            if self.abort_request:
+                return
+
+            response_text = response.json().get("response", "")
+            self.root.after(0, self.display_message, response_text, False)
+
+        except Exception as e:
+            if not self.abort_request:
+                self.root.after(0, self.show_error, str(e))
+        finally:
+            self.root.after(0, self.stop_thinking_animation)
+            self.root.after(0, lambda: self.btn_send.config(state="enabled"))
+            self.root.after(0, lambda: self.btn_stop.config(state="disabled"))
+
+    def start_thinking_animation(self):
+        self.loading_dots = 0
+        self.thinking_label.pack(side=tk.BOTTOM, fill=tk.X, pady=5)  # Usar pack en lugar de grid
+        self.animate_thinking()
+
+    def animate_thinking(self):
+        if self.loading_dots < 3:
+            self.thinking_label.config(text=f"Generando respuesta{'.' * self.loading_dots}")
+            self.loading_dots += 1
+            self.root.after(500, self.animate_thinking)
+
+    def stop_thinking_animation(self):
+        self.thinking_label.pack_forget()
+
+    def show_error(self, message):
+        error_frame = ttk.Frame(self.chat_frame, style="Error.TFrame")
+        error_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        ttk.Label(error_frame, text=f"⚠️ Error: {message}", style="Error.TLabel").pack(pady=5)
+
 
     def attach_image(self):
         files = filedialog.askopenfilenames(filetypes=[("Imágenes", "*.png *.jpg *.jpeg")])
@@ -191,7 +414,7 @@ class ChatApp:
                     "thumbnail": photo
                 })
 
-                lbl = ttk.Label(self.preview_frame, image=photo)
+                lbl = ttk.Label(self.root, image=photo)
                 lbl.image = photo
                 lbl.pack(side=tk.LEFT, padx=2)
 
@@ -213,217 +436,6 @@ class ChatApp:
         self.btnSend.config(text='Enviar', state='normal')
         self.btnStop.config(state='disabled')
         self.remove_thinking_label()
-
-
-    def send_message(self):
-        self.btnSend.config(text="Enviando..",state='disabled')
-        self.btnStop.config(state='normal')
-        text = self.input_field.get("1.0", tk.END).strip()
-        if not text and not self.current_images:
-            return
-        # Mostrar mensaje usuario
-        self.display_message(text, "user")
-
-        # Mostrar "pensando" parpadeando
-        self.thinking_label = tk.Label(self.chat_area, text="pensando", font=FONT_BOLD, fg=COLORS["primary"], bg=COLORS["input_bg"])
-        self.chat_area.window_create(tk.END, window=self.thinking_label)
-        self.blink_thinking()
-        # Limpiar inputs
-        self.input_field.delete("1.0", tk.END)
-        self.clear_previews()
-
-        # Enviar en hilo
-        self.threadthis=threading.Thread(
-            target=self.process_message,
-            args=(text, [img["base64"] for img in self.current_images]),
-            daemon=True
-        ).start()
-        self.current_images.clear()
-
-    def blink_thinking(self):
-        if self.thinking_label:
-            current_color = self.thinking_label.cget("fg")
-            next_color = COLORS["primary"] if current_color == COLORS["input_bg"] else COLORS["input_bg"]
-            self.thinking_label.config(fg=next_color)
-            self.root.after(500, self.blink_thinking)
-
-    def process_message(self, text, images):
-        try:
-            payload = {
-                "model": self.selected_model.get(),
-                "prompt": text,
-                "images": images,
-                "stream": False
-            }
-
-            response = requests.post(
-                "http://localhost:11434/api/generate",
-                json=payload,
-                timeout=120
-            )
-            match_string = "</think>"
-
-            response.raise_for_status()
-            response_text = response.json()["response"]
-            match_string_len = len(match_string)
-            for index, value in enumerate(response_text):
-                sub_string = response_text[index:match_string_len + index]
-                if sub_string == match_string:
-                    print("match string found in main string")
-                    indice=index+match_string_len
-                    response_text = response_text[indice:]
-                    break
-
-            self.root.after(0, self.display_message, response_text, "bot")
-            self.root.after(0, self.remove_thinking_label)
-        except Exception as e:
-            self.root.after(0, self.show_error, str(e))
-            self.root.after(0, self.remove_thinking_label)
-
-    def remove_thinking_label(self):
-        if self.thinking_label:
-            self.thinking_label.destroy()
-            self.thinking_label = None
-
-    def display_message(self, text, sender):
-        self.chat_area.config(state=tk.NORMAL)
-        if self.cutAffter:
-            self.chat_area.delete("1.0", tk.END)
-            self.cutAffter=False
-        # Creamos el contenedor interno una sola vez, organizado en dos columnas
-        if not hasattr(self, 'chat_container'):
-            self.chat_container = tk.Frame(self.chat_area, bg=COLORS["input_bg"])
-            # Se configuran dos columnas que se expanden de forma equitativa
-            self.chat_container.grid_columnconfigure(0, weight=1)
-            self.chat_container.grid_columnconfigure(1, weight=1)
-            self.row_counter = 0
-            self.chat_area.window_create(tk.END, window=self.chat_container)
-
-        is_bot = sender == "bot"
-        # Definimos el fondo: para el bot (verde claro) y para el usuario (blanco)
-        bg_color = "#ccc356" if is_bot else "#b4b9b5"
-        fg_color = "black"
-
-        # Creamos la burbuja del mensaje
-        bubble = tk.Frame(self.chat_container, bg=bg_color, padx=10, pady=5, relief="solid", bd=1)
-        text_widget = tk.Text(
-            bubble,
-            wrap=tk.WORD,
-            width=45,  # Ancho en caracteres (óptimo para lectura)
-            height=1,
-            bg=bg_color,
-            fg=fg_color,
-            font=("Segoe UI", 11),
-            borderwidth=0,
-            highlightthickness=0,
-            padx=12,
-            pady=8
-        )
-        # Sistema de tags mejorado
-        text_widget.tag_configure("header3",
-                                  font=("Arial", 12, "bold"),
-                                  foreground="#1A0DAB",
-                                  spacing3=8,
-                                  lmargin1=10)
-
-        text_widget.tag_configure("bold",
-                                  font=("Arial", 11, "bold"))
-
-        text_widget.tag_configure("code",
-                                  background="#E8F0FE",
-                                  font=("Consolas", 10),
-                                  relief="flat",
-                                  borderwidth=0)
-
-        text_widget.tag_configure("bullet",
-                                  lmargin1=25,
-                                  lmargin2=45,
-                                  spacing3=5)
-
-        # Procesamiento inteligente del texto
-        lines = text.split('\n')
-        for line in lines:
-            line = line.strip()
-
-            # Encabezados ###
-            if line.startswith("###"):
-                header_text = line.replace("#", "").strip()
-                text_widget.insert(tk.END, f"\n{header_text}\n", "header3")
-
-            # Elementos de lista con •
-            elif line.startswith("•"):
-                parts = line.split(":", 1)
-                if len(parts) > 1:
-                    text_widget.insert(tk.END, " " * 4 + "• ", "bullet")
-                    text_widget.insert(tk.END, parts[0][1:].strip() + ":\n", "bold")
-                    text_widget.insert(tk.END, " " * 8 + parts[1].strip() + "\n", "bullet")
-                else:
-                    text_widget.insert(tk.END, " " * 4 + line + "\n", "bullet")
-
-            # Código entre `
-            elif '`' in line:
-                segments = line.split('`')
-                for i, seg in enumerate(segments):
-                    if i % 2 == 1:  # Texto entre backticks
-                        text_widget.insert(tk.END, seg, "code")
-                    else:
-                        text_widget.insert(tk.END, seg)
-                text_widget.insert(tk.END, "\n")
-
-            # Texto normal
-            else:
-                # Detectar **texto** para negritas
-                segments = re.split(r'(\*\*.+?\*\*)', line)
-                for seg in segments:
-                    if seg.startswith("**") and seg.endswith("**"):
-                        text_widget.insert(tk.END, seg[2:-2], "bold")
-                    else:
-                        text_widget.insert(tk.END, seg)
-                text_widget.insert(tk.END, "\n")
-
-        # Ajustes finales
-        text_height = text_widget.index('end-1c').split('.')[0]
-        text_widget.config(height=text_height, state=tk.DISABLED)
-        text_widget.pack(anchor="w" if not is_bot else "e")
-        # Si el mensaje es del bot, agregamos el botón de copiar
-        if is_bot:
-            btn_copy = tk.Label(bubble, image=self.copy_icon, bg=bg_color, cursor="hand2")
-            btn_copy.pack(side=tk.RIGHT, padx=5)
-            btn_copy.bind("<Button-1>", lambda e: self.copy_text(text))
-        else:
-            # Si el mensaje es del usuario, agregamos el botón de copiar
-            btn_copy = tk.Label(bubble, image=self.copy_icon, bg=bg_color, cursor="hand2")
-            btn_copy.pack(side=tk.LEFT, padx=5)
-            btn_copy.bind("<Button-1>", lambda e: self.copy_text(text))
-
-        # Colocamos la burbuja en la fila actual:
-        # - Si es del usuario, la colocamos en la columna 0 (izquierda), alineada a la izquierda.
-        # - Si es del bot, la colocamos en la columna 1 (derecha), alineada a la derecha.
-        if is_bot:
-            bubble.grid(row=self.row_counter, column=1, sticky="e", padx=(0, 10), pady=5)
-        else:
-            bubble.grid(row=self.row_counter, column=0, sticky="w", padx=(10, 0), pady=5)
-
-        # Incrementamos el contador de filas para que cada mensaje ocupe su propia línea
-        self.row_counter += 1
-        self.chat_area.insert(tk.END, "\n")
-        self.chat_area.yview(tk.END)
-        self.chat_area.config(state=tk.DISABLED)
-        self.root.update_idletasks()
-
-    def copy_text(self, text):
-        self.root.clipboard_clear()
-        self.root.clipboard_append(text)
-
-    def clear_previews(self):
-        for widget in self.preview_frame.winfo_children():
-            widget.destroy()
-
-    def show_error(self, error):
-        self.chat_area.config(state=tk.NORMAL)
-        self.chat_area.insert(tk.END, f"ERROR: {error}\n\n", "error")
-        self.chat_area.tag_config("error", foreground=COLORS["danger"])
-        self.chat_area.config(state=tk.DISABLED)
 
 
 if __name__ == "__main__":
