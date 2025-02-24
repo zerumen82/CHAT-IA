@@ -8,9 +8,12 @@ from PIL import Image, ImageTk
 
 # Configuración estilo Bootstrap
 COLORS = {
-    "primary": "#007BFF",        # Azul primario
-    "user_bg": "#2d6099",        # Fondo para mensajes del usuario
-    "bot_bg": "#1e1e1e",         # Fondo para mensajes del bot
+    "primary": "#007BFF",
+    "user_bg": "#2d6099",  # Azul oscuro para mensajes del usuario
+    "user_text": "#ffffff",  # Texto blanco para mensajes del usuario
+    "bot_bg": "#1e1e1e",  # Gris oscuro para mensajes del bot
+    "bot_text": "#ffffff",
+    "but_bg": "#6f6f6c",
     "code_bg": "#2d2d2d",        # Fondo para bloques de código
     "text_fg": "#ffffff",        # Color de texto principal
     "code_fg": "#d4d4d4",        # Color de texto en bloques de código
@@ -65,16 +68,14 @@ class ChatApp:
 
         ttk.Button(header, text="↻", width=3, command=self.load_models).pack(side=tk.LEFT)
 
-        # Área de chat
-        self.chat_container = tk.Canvas(self.root, bg=COLORS["bot_bg"], highlightthickness=0)
+        self.chat_container = tk.Canvas(self.root, bg="#1e1e1e", highlightthickness=0)
         self.chat_scroll = ttk.Scrollbar(self.root, orient="vertical", command=self.chat_container.yview)
         self.chat_container.configure(yscrollcommand=self.chat_scroll.set)
+        self.chat_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.chat_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         self.chat_frame = ttk.Frame(self.chat_container)
         self.chat_window = self.chat_container.create_window((0, 0), window=self.chat_frame, anchor="nw")
-
-        self.chat_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
-        self.chat_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Panel inferior
         footer = ttk.Frame(self.root)
@@ -105,6 +106,64 @@ class ChatApp:
         # Animación de pensando
         self.thinking_label = ttk.Label(self.root, text="", font=FONTS["small"])
         self.loading_dots = 0
+
+    def setup_bindings(self):
+        # Enlace de teclado para Enter/Shift+Enter
+        self.input_field.bind("<Return>", self.on_enter)
+        self.input_field.bind("<Shift-Return>", lambda e: self.input_field.insert(tk.END, "\n"))
+
+        self.chat_container.bind("<Configure>", self.on_canvas_configure)
+        self.chat_frame.bind("<Configure>", self.on_frame_configure)
+
+        # Enlace para copiar con Ctrl+C
+        self.root.bind_all("<Control-c>", self.copy_from_chat)
+
+        # Enlace para detener con Escape
+        self.root.bind("<Escape>", lambda e: self.stop_request())
+
+    def on_canvas_configure(self, event):
+        self.chat_container.itemconfig(self.chat_window, width=event.width)
+
+    def on_frame_configure(self, event):
+        self.chat_container.configure(scrollregion=self.chat_container.bbox("all"))
+
+
+    def create_message_bubble(self, text, is_user=True):
+            # Crear un frame con estilo diferente según quien envía el mensaje
+            frame = ttk.Frame(
+                self.chat_frame,
+                style="User.TFrame" if is_user else "Bot.TFrame"
+            )
+            frame.pack(pady=10, padx=20, anchor=tk.E if is_user else tk.W)
+
+            # Crear un widget Text con colores diferentes
+            text_widget = tk.Text(
+                frame,
+                wrap=tk.WORD,
+                bg=COLORS["user_bg"] if is_user else COLORS["code_bg"],
+                fg=COLORS["user_text"] if is_user else COLORS["code_fg"],
+                font=FONTS["text"],
+                relief="flat",
+                padx=10,
+                pady=5,
+                height=self.calculate_height(text)
+            )
+
+            text_widget.insert("1.0", text)
+            text_widget.configure(state="disabled")
+            text_widget.pack()
+
+            # Botón de copiar
+            copy_btn = ttk.Button(
+                frame,
+                text="📋",
+                width=3,
+                command=lambda: self.copy_text(text)
+            )
+            copy_btn.pack(side=tk.RIGHT if is_user else tk.LEFT, padx=5)
+
+            self.chat_container.update_idletasks()
+            self.chat_container.yview_moveto(1.0)
 
     def setup_styles(self):
         style = ttk.Style()
@@ -144,31 +203,10 @@ class ChatApp:
                         background=COLORS["code_bg"],
                         padding=10)
 
-    def setup_bindings(self):
-        # Enlace de teclado para Enter/Shift+Enter
-        self.input_field.bind("<Return>", self.on_enter)
-        self.input_field.bind("<Shift-Return>", lambda e: self.input_field.insert(tk.END, "\n"))
-
-        # Enlaces para scroll del chat
-        self.chat_container.bind("<Configure>", self.on_canvas_configure)
-        self.chat_frame.bind("<Configure>", self.on_frame_configure)
-
-        # Enlace para copiar con Ctrl+C
-        self.root.bind_all("<Control-c>", self.copy_from_chat)
-
-        # Enlace para detener con Escape
-        self.root.bind("<Escape>", lambda e: self.stop_request())
-
     def on_enter(self, event):
         if not event.state & 0x1:  # Controlar Enter sin Shift
             self.send_message()
             return "break"
-
-    def on_canvas_configure(self, event):
-        self.chat_container.itemconfig(self.chat_window, width=event.width)
-
-    def on_frame_configure(self, event):
-        self.chat_container.configure(scrollregion=self.chat_container.bbox("all"))
 
     def copy_from_chat(self, event):
         try:
@@ -179,20 +217,6 @@ class ChatApp:
                 self.root.clipboard_append(selected)
         except tk.TclError:
             pass
-
-    def create_message_bubble(self, text, is_user=True):
-        frame = ttk.Frame(self.chat_frame, style="User.TFrame" if is_user else "Bot.TFrame")
-        frame.pack(pady=10, padx=20, anchor=tk.E if is_user else tk.W)
-
-        # Procesar contenido
-        self.process_content(frame, text, is_user)
-
-        # Botón de copiar
-        copy_btn = ttk.Button(frame, text="📋", width=3,
-                              command=lambda: self.copy_text(text))
-        copy_btn.pack(side=tk.RIGHT if is_user else tk.LEFT, padx=5)
-
-        self.chat_container.yview_moveto(1.0)
 
     def process_content(self, parent, text, is_user):
         # Dividir en bloques de código y texto
@@ -228,9 +252,12 @@ class ChatApp:
                 think_content = think_match.group(1).strip()
                 text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
+                # Crear burbuja de mensaje del bot
+                self.create_message_bubble(text, is_user=False)
+
                 # Crear desplegable
                 think_frame = ttk.Frame(self.chat_frame, style="Think.TFrame")
-                think_frame.pack(fill=tk.X, pady=5, padx=20, anchor=tk.W if is_bot else tk.E)
+                think_frame.pack(pady=5, padx=20, anchor=tk.W)
 
                 # 1. Crear el botón SIN comando primero
                 toggle_button = ttk.Button(
@@ -247,10 +274,10 @@ class ChatApp:
                 # 3. Añadir el comando DESPUÉS de crear el botón
                 toggle_button.config(command=lambda: self.toggle_think_content(content_frame, toggle_button))
 
-                toggle_button.pack(fill=tk.X)
-
-        if text.strip():
-            self.create_message_bubble(text, is_bot)
+                toggle_button.pack(side=tk.LEFT, padx=5)
+        else:
+            if text.strip():
+                self.create_message_bubble(text, is_bot)
 
     def toggle_think_content(self, content_frame, toggle_button):
         """
@@ -263,7 +290,7 @@ class ChatApp:
             content_frame.pack(fill=tk.X)
             toggle_button.config(text="💭 Ocultar pensamiento")
 
-    def create_text_block(self, parent, text, is_bot):
+    def create_text_block(self, parent, text, is_user):
         """
         Crea un bloque de texto con formato.
         """
@@ -273,8 +300,8 @@ class ChatApp:
         text_widget = tk.Text(
             text_frame,
             wrap=tk.WORD,
-            bg=COLORS["bot_bg"] if is_bot else COLORS["user_bg"],
-            fg=COLORS["text_fg"],
+            bg=COLORS["user_bg"] if is_user else COLORS["but_bg"],
+            fg=COLORS["user_text"] if is_user else COLORS["bot_text"],
             font=FONTS["text"],
             padx=10,
             pady=5,
