@@ -127,43 +127,17 @@ class ChatApp:
     def on_frame_configure(self, event):
         self.chat_container.configure(scrollregion=self.chat_container.bbox("all"))
 
-
     def create_message_bubble(self, text, is_user=True):
-            # Crear un frame con estilo diferente según quien envía el mensaje
-            frame = ttk.Frame(
-                self.chat_frame,
-                style="User.TFrame" if is_user else "Bot.TFrame"
-            )
-            frame.pack(pady=10, padx=20, anchor=tk.E if is_user else tk.W)
+        frame = ttk.Frame(self.chat_frame, style="User.TFrame" if is_user else "Bot.TFrame")
+        frame.pack(pady=10, padx=20, anchor=tk.E if is_user else tk.W)
 
-            # Crear un widget Text con colores diferentes
-            text_widget = tk.Text(
-                frame,
-                wrap=tk.WORD,
-                bg=COLORS["user_bg"] if is_user else COLORS["code_bg"],
-                fg=COLORS["user_text"] if is_user else COLORS["code_fg"],
-                font=FONTS["text"],
-                relief="flat",
-                padx=10,
-                pady=5,
-                height=self.calculate_height(text)
-            )
+        if is_user:
+            self.create_text_block(frame, text, is_user)
+        else:
+            self.process_content(frame, text, is_user)
 
-            text_widget.insert("1.0", text)
-            text_widget.configure(state="disabled")
-            text_widget.pack()
-
-            # Botón de copiar
-            copy_btn = ttk.Button(
-                frame,
-                text="📋",
-                width=3,
-                command=lambda: self.copy_text(text)
-            )
-            copy_btn.pack(side=tk.RIGHT if is_user else tk.LEFT, padx=5)
-
-            self.chat_container.update_idletasks()
-            self.chat_container.yview_moveto(1.0)
+        self.chat_container.update_idletasks()
+        self.chat_container.yview_moveto(1.0)
 
     def setup_styles(self):
         style = ttk.Style()
@@ -219,9 +193,7 @@ class ChatApp:
             pass
 
     def process_content(self, parent, text, is_user):
-        # Dividir en bloques de código y texto
         blocks = re.split(r'(```.*?```)', text, flags=re.DOTALL)
-
         for block in blocks:
             if block.startswith('```') and block.endswith('```'):
                 code_content = block[3:-3].strip()
@@ -237,8 +209,12 @@ class ChatApp:
                                               bg=COLORS["code_bg"], fg=COLORS["code_fg"],
                                               font=FONTS["code"], height=min(15, content.count('\n') + 1))
         code_text.insert(tk.END, content)
+        self.apply_syntax_highlighting(code_text)  # Aplicar resaltado de sintaxis
         code_text.configure(state=tk.DISABLED)
-        code_text.pack(fill=tk.X)
+        code_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        copy_btn = ttk.Button(code_frame, text="📋", width=3, command=lambda: self.copy_text(content))
+        copy_btn.pack(side=tk.RIGHT, padx=5)
 
     def display_message(self, text, sender):
         """
@@ -291,16 +267,13 @@ class ChatApp:
             toggle_button.config(text="💭 Ocultar pensamiento")
 
     def create_text_block(self, parent, text, is_user):
-        """
-        Crea un bloque de texto con formato.
-        """
         text_frame = ttk.Frame(parent)
         text_frame.pack(fill=tk.X, pady=5)
 
         text_widget = tk.Text(
             text_frame,
             wrap=tk.WORD,
-            bg=COLORS["user_bg"] if is_user else COLORS["but_bg"],
+            bg=COLORS["user_bg"] if is_user else COLORS["bot_bg"],
             fg=COLORS["user_text"] if is_user else COLORS["bot_text"],
             font=FONTS["text"],
             padx=10,
@@ -308,40 +281,59 @@ class ChatApp:
             relief="flat",
             height=self.calculate_height(text)
         )
-        self.insert_formatted_text(text_widget, text)
+        self.insert_formatted_text(text_widget, text)  # Llamada al formateador
         text_widget.config(state=tk.DISABLED)
         text_widget.pack(fill=tk.X)
 
     def insert_formatted_text(self, widget, text):
-        # Formatear texto con markdown básico
         self.tag_patterns = {
             'bold': (r'\*\*(.*?)\*\*', FONTS["bold"]),
             'italic': (r'\*(.*?)\*', FONTS["italic"]),
             'code': (r'`(.*?)`', FONTS["code"])
         }
-
         widget.delete("1.0", tk.END)
-        text = re.sub(r'(```.*?```)', '', text, flags=re.DOTALL)  # Eliminar bloques de código
-
-        # Insertar texto y aplicar formatos
         widget.mark_set("insert", "1.0")
         for line in text.split('\n'):
+            temp_line = line
             for tag, (pattern, font) in self.tag_patterns.items():
-                for match in re.finditer(pattern, line):
-                    start, end = match.span()
-                    before = line[:start]
-                    content = match.group(1)
-                    after = line[end:]
-
+                while True:
+                    match = re.search(pattern, temp_line)
+                    if not match:
+                        break
+                    before, content, after = (temp_line[:match.start()],
+                                              match.group(1),
+                                              temp_line[match.end():])
                     widget.insert("insert", before)
                     widget.insert("insert", content, (tag,))
-                    line = after
+                    temp_line = after
+            widget.insert("insert", temp_line + '\n')
 
-            widget.insert("insert", line + '\n')
-
-        # Configurar tags
         for tag, (_, font) in self.tag_patterns.items():
             widget.tag_configure(tag, font=font)
+
+        self.apply_syntax_highlighting(widget)
+
+    def apply_syntax_highlighting(self, widget):
+        keywords = ["def", "class", "import", "from", "return", "if", "else", "elif", "for", "while", "try", "except",
+                    "with", "as", "lambda"]
+        keyword_pattern = r'\b(' + '|'.join(keywords) + r')\b'
+        comment_pattern = r'#.*'
+        string_pattern = r'(\".*?\"|\'.*?\')'
+
+        widget.tag_configure("keyword", foreground="blue")
+        widget.tag_configure("comment", foreground="green")
+        widget.tag_configure("string", foreground="orange")
+
+        for pattern, tag in [(keyword_pattern, "keyword"), (comment_pattern, "comment"), (string_pattern, "string")]:
+            start = "1.0"
+            while True:
+                match = re.search(pattern, widget.get(start, tk.END), re.MULTILINE)
+                if not match:
+                    break
+                start_idx = f"{match.start() + int(start.split('.')[0]) - 1}.{match.start()}"
+                end_idx = f"{match.start() + int(start.split('.')[0]) - 1}.{match.end()}"
+                widget.tag_add(tag, start_idx, end_idx)
+                start = end_idx
 
     def calculate_height(self, text):
         lines = text.count('\n') + 1
