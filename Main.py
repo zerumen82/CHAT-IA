@@ -273,8 +273,8 @@ class ChatApp:
         text_widget = tk.Text(
             text_frame,
             wrap=tk.WORD,
-            bg=COLORS["user_bg"] if is_user else COLORS["bot_bg"],
-            fg=COLORS["user_text"] if is_user else COLORS["bot_text"],
+            bg=COLORS["user_bg"] if is_user else COLORS["code_bg"],
+            fg=COLORS["user_text"] if is_user else COLORS["code_fg"],
             font=FONTS["text"],
             padx=10,
             pady=5,
