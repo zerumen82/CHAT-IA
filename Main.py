@@ -370,33 +370,36 @@ class ChatApp:
         self.stop_thinking_animation()
 
     def process_response(self, prompt, images):
-        try:
-            payload = {
-                "model": self.selected_model.get(),
-                "prompt": prompt,
-                "images": images,
-                "stream": False
-            }
+        def run():
+            try:
+                payload = {
+                    "model": self.selected_model.get(),
+                    "prompt": prompt,
+                    "images": images,
+                    "stream": False
+                }
 
-            response = requests.post(
-                "http://localhost:11434/api/generate",
-                json=payload
-            )
-            response.raise_for_status()
+                response = requests.post(
+                    "http://localhost:11434/api/generate",
+                    json=payload
+                )
+                response.raise_for_status()
 
-            if self.abort_request:
-                return
+                if self.abort_request:
+                    return
 
-            response_text = response.json().get("response", "")
-            self.root.after(0, self.display_message, response_text, False)
+                response_text = response.json().get("response", "")
+                self.root.after(0, self.display_message, response_text, "bot")
 
-        except Exception as e:
-            if not self.abort_request:
-                self.root.after(0, self.show_error, str(e))
-        finally:
-            self.root.after(0, self.stop_thinking_animation)
-            self.root.after(0, lambda: self.btn_send.config(state="enabled"))
-            self.root.after(0, lambda: self.btn_stop.config(state="disabled"))
+            except Exception as e:
+                if not self.abort_request:
+                    self.root.after(0, self.show_error, str(e))
+            finally:
+                self.root.after(0, self.stop_thinking_animation)
+                self.root.after(0, lambda: self.btn_send.config(state="enabled"))
+                self.root.after(0, lambda: self.btn_stop.config(state="disabled"))
+
+        threading.Thread(target=run, daemon=True).start()
 
     def start_thinking_animation(self):
         self.loading_dots = 0
