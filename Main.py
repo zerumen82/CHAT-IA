@@ -209,11 +209,11 @@ class ChatApp:
                                               bg=COLORS["code_bg"], fg=COLORS["code_fg"],
                                               font=FONTS["code"], height=min(15, content.count('\n') + 1))
         code_text.insert(tk.END, content)
-        self.apply_syntax_highlighting(code_text)  # Aplicar resaltado de sintaxis
+        self.apply_syntax_highlighting(code_text)
         code_text.configure(state=tk.DISABLED)
         code_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        copy_btn = ttk.Button(code_frame, text="📋", width=3, command=lambda: self.copy_text(content))
+        copy_btn = ttk.Button(code_frame, text="📋 Copiar código", width=15, command=lambda: self.copy_text(content))
         copy_btn.pack(side=tk.RIGHT, padx=5)
 
     def display_message(self, text, sender):
@@ -281,9 +281,12 @@ class ChatApp:
             relief="flat",
             height=self.calculate_height(text)
         )
-        self.insert_formatted_text(text_widget, text)  # Llamada al formateador
+        self.insert_formatted_text(text_widget, text)
         text_widget.config(state=tk.DISABLED)
-        text_widget.pack(fill=tk.X)
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        copy_btn = ttk.Button(text_frame, text="📋", width=3, command=lambda: self.copy_text(text))
+        copy_btn.pack(side=tk.RIGHT, padx=5)
 
     def insert_formatted_text(self, widget, text):
         self.tag_patterns = {
@@ -314,26 +317,31 @@ class ChatApp:
         self.apply_syntax_highlighting(widget)
 
     def apply_syntax_highlighting(self, widget):
-        keywords = ["def", "class", "import", "from", "return", "if", "else", "elif", "for", "while", "try", "except",
-                    "with", "as", "lambda"]
-        keyword_pattern = r'\b(' + '|'.join(keywords) + r')\b'
-        comment_pattern = r'#.*'
-        string_pattern = r'(\".*?\"|\'.*?\')'
+        def run():
+            keywords = ["def", "class", "import", "from", "return", "if", "else", "elif", "for", "while", "try",
+                        "except",
+                        "with", "as", "lambda"]
+            keyword_pattern = r'\b(' + '|'.join(keywords) + r')\b'
+            comment_pattern = r'#.*'
+            string_pattern = r'(\".*?\"|\'.*?\')'
 
-        widget.tag_configure("keyword", foreground="blue")
-        widget.tag_configure("comment", foreground="green")
-        widget.tag_configure("string", foreground="orange")
+            widget.tag_configure("keyword", foreground="blue")
+            widget.tag_configure("comment", foreground="green")
+            widget.tag_configure("string", foreground="orange")
 
-        for pattern, tag in [(keyword_pattern, "keyword"), (comment_pattern, "comment"), (string_pattern, "string")]:
-            start = "1.0"
-            while True:
-                match = re.search(pattern, widget.get(start, tk.END), re.MULTILINE)
-                if not match:
-                    break
-                start_idx = f"{match.start() + int(start.split('.')[0]) - 1}.{match.start()}"
-                end_idx = f"{match.start() + int(start.split('.')[0]) - 1}.{match.end()}"
-                widget.tag_add(tag, start_idx, end_idx)
-                start = end_idx
+            for pattern, tag in [(keyword_pattern, "keyword"), (comment_pattern, "comment"),
+                                 (string_pattern, "string")]:
+                start = "1.0"
+                while True:
+                    match = re.search(pattern, widget.get(start, tk.END), re.MULTILINE)
+                    if not match:
+                        break
+                    start_idx = f"{match.start() + int(start.split('.')[0]) - 1}.{match.start()}"
+                    end_idx = f"{match.start() + int(start.split('.')[0]) - 1}.{match.end()}"
+                    self.root.after(0, widget.tag_add, tag, start_idx, end_idx)
+                    start = end_idx
+
+        threading.Thread(target=run, daemon=True).start()
 
     def calculate_height(self, text):
         lines = text.count('\n') + 1
