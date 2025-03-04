@@ -35,6 +35,7 @@ FONTS = {
     "small": ("Segoe UI", 11)
 }
 
+
 class ChatApp:
     def __init__(self, root):
         self.copy_icon = Image.open("D:\PROJECTS\OLLAMACHATI\dist\CHAT-IA\_internal\copil.png")
@@ -197,6 +198,7 @@ class ChatApp:
         for block in blocks:
             if block.startswith('```') and block.endswith('```'):
                 code_content = block[3:-3].strip()
+                code_content
                 self.create_code_block(parent, code_content, is_user)
             else:
                 self.create_text_block(parent, block, is_user)
@@ -397,17 +399,66 @@ class ChatApp:
                     return
 
                 response_text = response.json().get("response", "")
-                self.root.after(0, self.display_message, response_text, "bot")
+
+                # Detectar si la respuesta es código y formatear
+                if 'python' in response_text.lower() and '**' in response_text:
+                    formatted_response = self.format_code_response(response_text)
+                else:
+                    formatted_response = response_text
+
+                self.root.after(0, self.display_message(formatted_response, "bot"))
 
             except Exception as e:
                 if not self.abort_request:
-                    self.root.after(0, self.show_error, str(e))
+                    self.root.after(0, self.show_error(str(e)))
             finally:
                 self.root.after(0, self.stop_thinking_animation)
                 self.root.after(0, lambda: self.btn_send.config(state="enabled"))
                 self.root.after(0, lambda: self.btn_stop.config(state="disabled"))
 
         threading.Thread(target=run, daemon=True).start()
+
+    def display_message(self, text, sender):
+        """
+        Muestra un mensaje en el chat, con soporte para el tag <think> como desplegable.
+        """
+        is_bot = (sender == "bot")
+
+        if "<think>" in text and "</think>" in text:
+            think_match = re.search(r'<think>(.*?)</think>', text, re.DOTALL)
+            if think_match:
+                think_content = think_match.group(1).strip()
+                text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+                # Crear burbuja de mensaje del bot
+                self.create_message_bubble(text, is_user=False)
+                # Crear desplegable
+                think_frame = ttk.Frame(self.chat_frame, style="Think.TFrame")
+                think_frame.pack(pady=5, padx=20, anchor=tk.W)
+                # 1. Crear el botón SIN comando primero
+                toggle_button = ttk.Button(
+                    think_frame,
+                    text="💭 Mostrar pensamiento",
+                    style="Think.TButton"
+                )
+                # 2. Crear el frame de contenido
+                content_frame = ttk.Frame(think_frame, style="ThinkContent.TFrame")
+                # check if is code
+                if 'python' in think_content.lower() and '**' in think_content:
+                    self.process_content(content_frame, think_content, is_bot)
+                else:
+                    self.create_text_block(content_frame, think_content, is_bot)
+                content_frame.pack_forget()
+                # 3. Añadir el comando DESPUÉS de crear el botón
+                toggle_button.config(command=lambda: self.toggle_think_content(content_frame, toggle_button))
+
+                toggle_button.pack(side=tk.LEFT, padx=5)
+        else:
+            if text.strip():
+                # check if is code
+                if 'python' in text.lower() and '**' in text:
+                    self.process_content(self.chat_frame, text, is_bot)
+                else:
+                    self.create_message_bubble(text, is_bot)
 
     def start_thinking_animation(self):
         self.loading_dots = 0
@@ -429,6 +480,27 @@ class ChatApp:
 
         ttk.Label(error_frame, text=f"⚠️ Error: {message}", style="Error.TLabel").pack(pady=5)
 
+    def format_code_response(self, code_string):
+        """
+        Formatea una cadena de código eliminando marcadores y ajustando el formato.
+        """
+        # Remove leading and trailing "python**" and "**"
+        code_string = re.sub(r"^python\*\*", "", code_string, flags=re.IGNORECASE)
+        code_string = re.sub(r"\*\*$", "", code_string)
+        # Remove leading and trailing backticks (```)
+        code_string = re.sub(r"^```", "", code_string)
+        code_string = re.sub(r"```$", "", code_string)
+        code_string = code_string.strip()
+
+        # Remove the lang name from the start
+        code_string = re.sub(r"^python", "", code_string, flags=re.IGNORECASE)
+        code_string = code_string.strip()
+
+        # Remove extra line breaks
+        code_string = re.sub(r"[\r\n]{3,}", "\n\n", code_string)
+        code_string = code_string.strip()
+
+        return code_string
 
     def attach_image(self):
         files = filedialog.askopenfilenames(filetypes=[("Imágenes", "*.png *.jpg *.jpeg")])
