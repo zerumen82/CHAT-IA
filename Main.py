@@ -7,24 +7,36 @@ import threading
 from PIL import Image, ImageTk
 
 # Configuración estilo Bootstrap
+import re
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext, filedialog
+import requests
+import base64
+import threading
+from PIL import Image, ImageTk
+
+
 COLORS = {
     "primary": "#007BFF",
+    "bot_bubble_bg": "#282828",  # Un gris un poco más claro que el fondo general
+    "bot_bubble_border": "#3a3a3a", # Un gris un poco mas oscuro para el borde
     "user_bg": "#2d6099",  # Azul oscuro para mensajes del usuario
     "user_text": "#ffffff",  # Texto blanco para mensajes del usuario
     "bot_bg": "#1e1e1e",  # Gris oscuro para mensajes del bot
     "bot_text": "#ffffff",
     "but_bg": "#6f6f6c",
-    "code_bg": "#2d2d2d",        # Fondo para bloques de código
-    "text_fg": "#ffffff",        # Color de texto principal
-    "code_fg": "#d4d4d4",        # Color de texto en bloques de código
-    "button_bg": "#3a3a3a",      # Fondo de botones
-    "danger": "#DC3545",         # Color para errores o advertencias
-    "scroll_bg": "#404040",      # Fondo de la barra de scroll
-    "scroll_arrow": "#808080",   # Color de las flechas del scroll
-    "input_bg": "#686868",       # Fondo del campo de entrada de texto
-    "header_bg": "#686868",      # Fondo del encabezado
-    "footer_bg": "#686868",       # Fondo del pie de página
+    "code_bg": "#2d2d2d",  # Fondo para bloques de código
+    "text_fg": "#ffffff",  # Color de texto principal
+    "code_fg": "#d4d4d4",  # Color de texto en bloques de código
+    "button_bg": "#3a3a3a",  # Fondo de botones
+    "danger": "#DC3545",  # Color para errores o advertencias
+    "scroll_bg": "#404040",  # Fondo de la barra de scroll
+    "scroll_arrow": "#808080",  # Color de las flechas del scroll
+    "input_bg": "#686868",  # Fondo del campo de entrada de texto
+    "header_bg": "#686868",  # Fondo del encabezado
+    "footer_bg": "#686868",  # Fondo del pie de página
     "BG": "#686868"
+
 }
 
 FONTS = {
@@ -36,9 +48,10 @@ FONTS = {
 }
 
 
+
 class ChatApp:
     def __init__(self, root):
-        self.copy_icon = Image.open("D:\PROJECTS\OLLAMACHATI\dist\CHAT-IA\_internal\copil.png")
+        self.copy_icon = Image.open("D:\PROJECTS\OLLAMACHATI\copil.png")
         self.copy_icon.thumbnail((20, 20))
         self.copy_icon = ImageTk.PhotoImage(self.copy_icon)
         self.root = root
@@ -47,10 +60,13 @@ class ChatApp:
         self.selected_model = tk.StringVar()
         self.abort_request = False
         self.active_thread = None
+        self.conversation_history = []
+        self.previous_user_message = ""
         self.setup_ui()
         self.setup_styles()
         self.setup_bindings()
         self.load_models()
+        self.selected_model.trace_add('write', self.on_model_change)  #
 
     def setup_ui(self):
         self.root.title("Chat-IA")
@@ -68,7 +84,10 @@ class ChatApp:
         self.model_dropdown.pack(side=tk.LEFT, padx=5)
 
         ttk.Button(header, text="↻", width=3, command=self.load_models).pack(side=tk.LEFT)
-
+        # Añadir botón de nueva conversación
+        self.btn_new_conversation = ttk.Button(
+            header, text="Nueva Conversación", command=self.new_conversation)
+        self.btn_new_conversation.pack(side=tk.LEFT, padx=5)
         self.chat_container = tk.Canvas(self.root, bg="#1e1e1e", highlightthickness=0)
         self.chat_scroll = ttk.Scrollbar(self.root, orient="vertical", command=self.chat_container.yview)
         self.chat_container.configure(yscrollcommand=self.chat_scroll.set)
@@ -108,6 +127,50 @@ class ChatApp:
         self.thinking_label = ttk.Label(self.root, text="", font=FONTS["small"])
         self.loading_dots = 0
 
+    def get_previous_user_message(self):
+        """
+        Recupera el texto del último mensaje del usuario si existe.
+        """
+        user_messages = []
+        for widget in self.chat_frame.winfo_children():
+            if isinstance(widget, ttk.Frame) and widget.winfo_manager() == "pack":
+                if widget.cget("style") == "User.TFrame":
+                    for inner_widget in widget.winfo_children():
+                        if isinstance(inner_widget, ttk.Frame):
+                            for text_widget in inner_widget.winfo_children():
+                                if isinstance(text_widget, tk.Text):
+                                    user_messages.append(text_widget.get("1.0", tk.END).strip())
+        if user_messages:
+            return user_messages[-1]
+        else:
+            return ""
+
+    def on_model_change(self, *args):
+        """
+        Este metodo se llamara cuando el modelo en el dropdown cambie.
+        """
+        selected_model = self.selected_model.get()
+        print(f"Modelo seleccionado cambiado a: {selected_model}")
+
+    def new_conversation(self):
+        """
+        Inicia una nueva conversación, borrando el historial y la interfaz.
+        """
+        # Limpiar el historial de la conversación
+        self.conversation_history.clear()
+
+        # Limpiar la interfaz de mensajes
+        for widget in self.chat_frame.winfo_children():
+            widget.destroy()
+
+        # Limpiar el campo de entrada
+        self.input_field.delete("1.0", tk.END)
+
+        # Opcional: reinicia también el modelo seleccionado (si lo deseas)
+        # self.selected_model.set(...)
+        # Opcional: Limpia la lista de imagenes
+        self.current_images.clear()
+
     def setup_bindings(self):
         # Enlace de teclado para Enter/Shift+Enter
         self.input_field.bind("<Return>", self.on_enter)
@@ -136,7 +199,6 @@ class ChatApp:
             self.create_text_block(frame, text, is_user)
         else:
             self.process_content(frame, text, is_user)
-
         self.chat_container.update_idletasks()
         self.chat_container.yview_moveto(1.0)
 
@@ -177,6 +239,14 @@ class ChatApp:
         style.configure("ThinkContent.TFrame",
                         background=COLORS["code_bg"],
                         padding=10)
+        # Add code block style
+        style.configure("Code.TFrame", background=COLORS["code_bg"])
+        style.configure("Bot.TFrame",
+                        background=COLORS["bot_bubble_bg"],
+                        borderwidth=1,  # A un borde de 1 píxel
+                        relief="solid",  # Borde sólido
+                        bordercolor=COLORS["bot_bubble_border"])
+        style.configure("User.TFrame", background=COLORS["user_bg"])
 
     def on_enter(self, event):
         if not event.state & 0x1:  # Controlar Enter sin Shift
@@ -194,11 +264,12 @@ class ChatApp:
             pass
 
     def process_content(self, parent, text, is_user):
+        # Remove ####
+        text = re.sub(r'^####.*$', '', text, flags=re.MULTILINE)
         blocks = re.split(r'(```.*?```)', text, flags=re.DOTALL)
         for block in blocks:
-            if block.startswith('```') and block.endswith('```'):
+            if block.startswith('```') and block.endswith('```') and block.endswith('```'):
                 code_content = block[3:-3].strip()
-                code_content
                 self.create_code_block(parent, code_content, is_user)
             else:
                 self.create_text_block(parent, block, is_user)
@@ -206,9 +277,12 @@ class ChatApp:
     def create_code_block(self, parent, content, is_user):
         code_frame = ttk.Frame(parent, style="Code.TFrame")
         code_frame.pack(fill=tk.X, pady=5)
+        # Determine colors based on whether it's a user or bot message
+        bg_color = COLORS["user_bg"] if is_user else COLORS["code_bg"]
+        fg_color = COLORS["user_text"] if is_user else COLORS["code_fg"]
 
         code_text = scrolledtext.ScrolledText(code_frame, wrap=tk.NONE,
-                                              bg=COLORS["code_bg"], fg=COLORS["code_fg"],
+                                              bg=bg_color, fg=fg_color,
                                               font=FONTS["code"], height=min(15, content.count('\n') + 1))
         code_text.insert(tk.END, content)
         self.apply_syntax_highlighting(code_text)
@@ -222,6 +296,7 @@ class ChatApp:
         """
         Muestra un mensaje en el chat, con soporte para el tag <think> como desplegable.
         """
+        is_user = (sender == "user")
         is_bot = (sender == "bot")
 
         if "<think>" in text and "</think>" in text:
@@ -229,33 +304,35 @@ class ChatApp:
             if think_match:
                 think_content = think_match.group(1).strip()
                 text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-
                 # Crear burbuja de mensaje del bot
                 self.create_message_bubble(text, is_user=False)
-
                 # Crear desplegable
                 think_frame = ttk.Frame(self.chat_frame, style="Think.TFrame")
                 think_frame.pack(pady=5, padx=20, anchor=tk.W)
-
                 # 1. Crear el botón SIN comando primero
                 toggle_button = ttk.Button(
                     think_frame,
                     text="💭 Mostrar pensamiento",
                     style="Think.TButton"
                 )
-
                 # 2. Crear el frame de contenido
                 content_frame = ttk.Frame(think_frame, style="ThinkContent.TFrame")
-                self.create_text_block(content_frame, think_content, is_bot)
+                # check if is code
+                if 'python' in think_content.lower() and '**' in think_content:
+                    self.process_content(content_frame, think_content, is_user=False)
+                else:
+                    self.create_text_block(content_frame, think_content, is_user=False)
                 content_frame.pack_forget()
-
-                # 3. Añadir el comando DESPUÉS de crear el botón
+                # 3. Añadir el comando DESPUS de crear el botón
                 toggle_button.config(command=lambda: self.toggle_think_content(content_frame, toggle_button))
 
                 toggle_button.pack(side=tk.LEFT, padx=5)
         else:
             if text.strip():
-                self.create_message_bubble(text, is_bot)
+                if 'python' in text.lower() and '**' in text:
+                    self.process_content(self.chat_frame, text, is_user=False)
+                else:
+                    self.create_message_bubble(text, is_user=is_user)
 
     def toggle_think_content(self, content_frame, toggle_button):
         """
@@ -272,11 +349,15 @@ class ChatApp:
         text_frame = ttk.Frame(parent)
         text_frame.pack(fill=tk.X, pady=5)
 
+        # Determine colors based on whether it's a user or bot message
+        bg_color = COLORS["user_bg"] if is_user else COLORS["bot_bubble_bg"]  # cambiamos el color de fondo
+        fg_color = COLORS["user_text"] if is_user else COLORS["bot_text"]
+
         text_widget = tk.Text(
             text_frame,
             wrap=tk.WORD,
-            bg=COLORS["user_bg"] if is_user else COLORS["code_bg"],
-            fg=COLORS["user_text"] if is_user else COLORS["code_fg"],
+            bg=bg_color,  # Use the determined background color
+            fg=fg_color,  # Use the determined foreground color
             font=FONTS["text"],
             padx=10,
             pady=5,
@@ -289,6 +370,8 @@ class ChatApp:
 
         copy_btn = ttk.Button(text_frame, text="📋", width=3, command=lambda: self.copy_text(text))
         copy_btn.pack(side=tk.RIGHT, padx=5)
+        # Store the text widget in the frame
+        text_frame.text_widget = text_widget
 
     def insert_formatted_text(self, widget, text):
         self.tag_patterns = {
@@ -358,6 +441,9 @@ class ChatApp:
         if not user_input and not self.current_images:
             return
 
+        # Get the previous user message
+        previous_user_message = self.get_previous_user_message()
+
         self.abort_request = False
         self.btn_send.config(state="disabled")
         self.btn_stop.config(state="enabled")
@@ -367,7 +453,7 @@ class ChatApp:
 
         self.active_thread = threading.Thread(
             target=self.process_response,
-            args=(user_input, [img["base64"] for img in self.current_images]),
+            args=(user_input, [img["base64"] for img in self.current_images], previous_user_message),
             daemon=True
         )
         self.active_thread.start()
@@ -379,12 +465,19 @@ class ChatApp:
         self.btn_send.config(state="enabled")
         self.stop_thinking_animation()
 
-    def process_response(self, prompt, images):
+    def process_response(self, prompt, images, previous_user_message):
         def run():
+
             try:
+                # Include the previous user message in the prompt
+                combined_prompt = ""
+                if previous_user_message:
+                    combined_prompt += f"Previous Question: {previous_user_message}\n"
+                combined_prompt += f"Answer this: {prompt}"
+
                 payload = {
                     "model": self.selected_model.get(),
-                    "prompt": prompt,
+                    "prompt": combined_prompt,
                     "images": images,
                     "stream": False
                 }
@@ -400,14 +493,13 @@ class ChatApp:
 
                 response_text = response.json().get("response", "")
 
-                # Detectar si la respuesta es código y formatear
                 if 'python' in response_text.lower() and '**' in response_text:
                     formatted_response = self.format_code_response(response_text)
                 else:
                     formatted_response = response_text
 
-                self.root.after(0, self.display_message(formatted_response, "bot"))
-
+                    # Llamar a display_message con is_bot=True
+                self.root.after(0, self.display_message(formatted_response, sender="bot"))
             except Exception as e:
                 if not self.abort_request:
                     self.root.after(0, self.show_error(str(e)))
@@ -422,15 +514,15 @@ class ChatApp:
         """
         Muestra un mensaje en el chat, con soporte para el tag <think> como desplegable.
         """
+        is_user = (sender == "user")
         is_bot = (sender == "bot")
-
         if "<think>" in text and "</think>" in text:
             think_match = re.search(r'<think>(.*?)</think>', text, re.DOTALL)
             if think_match:
                 think_content = think_match.group(1).strip()
                 text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
                 # Crear burbuja de mensaje del bot
-                self.create_message_bubble(text, is_user=False)
+                self.create_message_bubble(text, is_user=False)  # <--- AQUI ESTA LA CORRECCION
                 # Crear desplegable
                 think_frame = ttk.Frame(self.chat_frame, style="Think.TFrame")
                 think_frame.pack(pady=5, padx=20, anchor=tk.W)
@@ -454,11 +546,10 @@ class ChatApp:
                 toggle_button.pack(side=tk.LEFT, padx=5)
         else:
             if text.strip():
-                # check if is code
                 if 'python' in text.lower() and '**' in text:
-                    self.process_content(self.chat_frame, text, is_bot)
+                    self.process_content(self.chat_frame, text, is_user=False)  # <--- AQUI ESTA LA CORRECCION
                 else:
-                    self.create_message_bubble(text, is_bot)
+                    self.create_message_bubble(text, is_user=False)  # <--- AQUI ESTA LA CORRECCION
 
     def start_thinking_animation(self):
         self.loading_dots = 0
