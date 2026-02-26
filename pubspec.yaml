@@ -1,0 +1,48 @@
+name: lightchat
+description: A lightweight chat interface for vLLM with multimodal support
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # UI
+  cupertino_icons: ^1.0.5
+  flutter_animate: ^4.3.0
+  
+  # Estado
+  provider: ^6.0.5
+  
+  # HTTP y API
+  http: ^1.1.2
+  dio: ^5.4.0
+  
+  # Almacenamiento
+  shared_preferences: ^2.2.2
+  path_provider: ^2.1.1
+  
+  # Imágenes
+  image_picker: ^1.0.4
+  image: ^4.1.0
+  
+  # Ventana
+  window_manager: ^0.3.7
+  
+  # Utilidades
+  path: ^1.8.3
+  uuid: ^4.2.1
+  
+  # Hardware
+  system_info2: ^4.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/
