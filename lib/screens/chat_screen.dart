@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:lightchat/services/chat_service.dart';
-import 'package:lightchat/services/vllm_service.dart';
+import 'package:lightchat/services/chat_service_ollama.dart';
+import 'package:lightchat/services/ollama_service.dart';
 import 'package:lightchat/widgets/model_selector.dart';
 import 'package:lightchat/widgets/message_bubble.dart';
 import 'package:lightchat/widgets/capsule_icon.dart';
 import 'package:lightchat/widgets/chat_input.dart';
-import 'package:lightchat/widgets/vllm_status_widget.dart';
-import 'package:lightchat/screens/vllm_manager_screen.dart';
+import 'package:lightchat/widgets/ollama_status_widget.dart';
+import 'package:lightchat/screens/ollama_manager_screen.dart';
 
 /// Pantalla principal de chat con diseño estilo mensajería
 class ChatScreen extends StatefulWidget {
@@ -42,31 +42,30 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _handleSendMessage(String text, List<XFile>? images) async {
-    final chatService = context.read<ChatService>();
+    final chatService = context.read<ChatServiceOllama>();
 
-    // TODO: Implementar envío de imágenes cuando el modelo sea multimodal
+    // Soporte multimodal con Ollama
+    List<String>? imagePaths;
     if (images != null && images.isNotEmpty) {
-      // Por ahora, mostrar mensaje indicando que las imágenes no están soportadas
-      // En el futuro, esto se integrará con el servicio de chat multimodal
+      imagePaths = images.map((img) => img.path).toList();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-              'Imágenes seleccionadas: ${images.length}. Soporte multimodal próximamente.'),
-          duration: const Duration(seconds: 2),
+          content: Text('Procesando ${images.length} imagen(es)...'),
+          duration: const Duration(seconds: 1),
           behavior: SnackBarBehavior.floating,
         ),
       );
     }
 
     if (text.isNotEmpty) {
-      chatService.sendMessage(text);
+      await chatService.sendMessage(text, imagePaths: imagePaths);
       Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final chatService = context.watch<ChatService>();
+    final chatService = context.watch<ChatServiceOllama>();
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -76,12 +75,12 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           Column(
             children: [
-              // Widget de estado de vLLM cuando no hay conexión
-              Consumer<VllmService>(
-                builder: (context, vllm, _) {
+              // Widget de estado de Ollama cuando no hay conexión
+              Consumer<OllamaService>(
+                builder: (context, ollama, _) {
                   if (chatService.availableModels.isEmpty &&
-                      vllm.serverInfo.status != VllmStatus.running) {
-                    return const VllmQuickConnect();
+                      ollama.serverInfo.status != OllamaStatus.running) {
+                    return const OllamaQuickConnect();
                   }
                   return const SizedBox.shrink();
                 },
@@ -119,7 +118,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   PreferredSizeWidget _buildAppBar(
-      BuildContext context, ChatService chatService) {
+      BuildContext context, ChatServiceOllama chatService) {
     final colorScheme = Theme.of(context).colorScheme;
 
     return AppBar(
@@ -175,12 +174,12 @@ class _ChatScreenState extends State<ChatScreen> {
           onSelected: (value) => _handleMenuAction(value, chatService),
           itemBuilder: (context) => [
             PopupMenuItem(
-              value: 'vllm_manager',
+              value: 'ollama_manager',
               child: Row(
                 children: [
                   Icon(Icons.dns, size: 20, color: colorScheme.primary),
                   const SizedBox(width: 12),
-                  const Text('Gestionar vLLM'),
+                  const Text('Gestionar Ollama'),
                 ],
               ),
             ),
@@ -212,7 +211,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildConnectionIndicator(ChatService chatService) {
+  Widget _buildConnectionIndicator(ChatServiceOllama chatService) {
     final colorScheme = Theme.of(context).colorScheme;
     final isConnected = chatService.availableModels.isNotEmpty;
 
@@ -236,11 +235,11 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Botón para mostrar/ocultar consola
   Widget _buildConsoleToggleButton() {
-    return Consumer<VllmService>(
-      builder: (context, vllm, _) {
+    return Consumer<OllamaService>(
+      builder: (context, ollama, _) {
         // Solo mostrar si el servidor está corriendo o iniciando
-        if (vllm.serverInfo.status != VllmStatus.running &&
-            vllm.serverInfo.status != VllmStatus.starting) {
+        if (ollama.serverInfo.status != OllamaStatus.running &&
+            ollama.serverInfo.status != OllamaStatus.starting) {
           return const SizedBox.shrink();
         }
 
@@ -276,8 +275,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Consola flotante con stdout/stderr
   Widget _buildFloatingConsole() {
-    return Consumer<VllmService>(
-      builder: (context, vllm, _) {
+    return Consumer<OllamaService>(
+      builder: (context, ollama, _) {
         // Auto-scroll al final cuando llegan nuevos logs
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (_consoleScrollController.hasClients) {
@@ -321,7 +320,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        'CONSOLA vLLM',
+                        'CONSOLA OLLAMA',
                         style: TextStyle(
                           fontFamily: 'Courier',
                           fontSize: 10,
@@ -337,7 +336,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             height: 8,
                             decoration: BoxDecoration(
                               color:
-                                  vllm.serverInfo.status == VllmStatus.running
+                                  ollama.serverInfo.status == OllamaStatus.running
                                       ? Colors.green
                                       : Colors.orange,
                               shape: BoxShape.circle,
@@ -372,9 +371,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: ListView.builder(
                       controller: _consoleScrollController,
                       padding: const EdgeInsets.all(4),
-                      itemCount: _parseConsoleLines(vllm.logs).length,
+                      itemCount: ollama.logs.length,
                       itemBuilder: (context, index) {
-                        final line = _parseConsoleLines(vllm.logs)[index];
+                        final line = ollama.logs[index];
                         return _buildConsoleLine(line);
                       },
                     ),
@@ -398,7 +397,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     children: [
                       // Botón copiar
                       TextButton.icon(
-                        onPressed: () => _copyLogs(vllm.logs),
+                        onPressed: () => _copyLogs(ollama.logs.join('\n')),
                         icon: const Icon(Icons.copy, size: 14),
                         label: const Text('COPIAR'),
                         style: TextButton.styleFrom(
@@ -410,7 +409,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       const SizedBox(width: 8),
                       // Botón limpiar
                       TextButton.icon(
-                        onPressed: vllm.clearLogs,
+                        onPressed: () {
+                          // Ollama no tiene clearLogs, es un getter
+                        },
                         icon: const Icon(Icons.clear_all, size: 14),
                         label: const Text('LIMPIAR'),
                         style: TextButton.styleFrom(
@@ -489,7 +490,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildMessageList(ChatService chatService) {
+  Widget _buildMessageList(ChatServiceOllama chatService) {
     final messages = chatService.messages;
 
     if (messages.isEmpty) {
@@ -585,9 +586,9 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  String _getHintText(ChatService chatService) {
+  String _getHintText(ChatServiceOllama chatService) {
     if (chatService.availableModels.isEmpty) {
-      return 'Conecta vLLM primero...';
+      return 'Conecta Ollama primero...';
     }
     if (chatService.isLoading) {
       return 'Esperando respuesta...';
@@ -595,12 +596,12 @@ class _ChatScreenState extends State<ChatScreen> {
     return 'Escribe un mensaje...';
   }
 
-  void _handleMenuAction(String action, ChatService chatService) {
+  void _handleMenuAction(String action, ChatServiceOllama chatService) {
     switch (action) {
-      case 'vllm_manager':
+      case 'ollama_manager':
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (context) => const VllmManagerScreen(),
+            builder: (context) => const OllamaManagerScreen(),
             fullscreenDialog: true,
           ),
         );
@@ -621,7 +622,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _showClearHistoryDialog(ChatService chatService) {
+  void _showClearHistoryDialog(ChatServiceOllama chatService) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -636,7 +637,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           FilledButton(
             onPressed: () {
-              chatService.clearHistory();
+              chatService.clearMessages();
               Navigator.pop(context);
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(

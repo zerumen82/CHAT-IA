@@ -1,10 +1,10 @@
-/// Configuración para el servidor vLLM
-class VllmConfig {
-  /// URL base del servidor vLLM
-  static String serverUrl = 'http://localhost:8000';
+/// Configuración para Ollama (anteriormente vLLM)
+class OllamaConfig {
+  /// URL base del servidor Ollama
+  static String serverUrl = 'http://localhost:11434';
 
   /// Puerto por defecto
-  static const int defaultPort = 8000;
+  static const int defaultPort = 11434;
 
   /// Timeout para peticiones HTTP (en segundos)
   static const int timeoutSeconds = 120;
@@ -24,33 +24,33 @@ class VllmConfig {
   /// Top-p por defecto
   static const double defaultTopP = 0.9;
 
-  /// Configuración de modelos uncensored preferidos
-  static const List<String> preferredUncensoredModels = [
-    'dolphin-2.9-llama3-8b',
-    'mistral-7b-openhermes',
-    'nous-hermes-2-mixtral-8x7b',
-    'wizardlm-2-8x22b',
-    'dolphin-2.6-phi-2',
+  /// Modelos Ollama preferidos
+  static const List<String> preferredModels = [
+    'llama3.2',
+    'mistral',
+    'codellama',
+    'phi3',
+    'qwen2.5',
   ];
 
-  /// Modelos multimodales soportados
+  /// Modelos multimodales soportados (soporte de imágenes)
   static const List<String> multimodalModels = [
-    'llama-3.2-11b-vision',
-    'pixtral-12b',
-    'qwen2-vl-7b',
-    'phi-3.5-vision',
+    'llava',
+    'llama3.2-vision',
+    'bakllava',
+    'qwen2-vl',
   ];
 
-  /// Directorio de modelos por defecto (relativo a la instalación)
+  /// Directorio de modelos por defecto
   static String modelsDirectory = 'models';
 
-  /// Subdirectorio para vLLM dentro de la instalación
-  static const String vllmSubdir = 'vllm';
+  /// Subdirectorio para Ollama
+  static const String ollamaSubdir = 'ollama';
 
   /// Subdirectorio para modelos descargados
   static const String downloadedModelsSubdir = 'downloaded_models';
 
-  /// Subdirectorio para caché de modelos
+  /// Subdirectorio para caché
   static const String cacheSubdir = 'cache';
 
   /// Obtener URL completa para un endpoint
@@ -61,12 +61,12 @@ class VllmConfig {
     return '$serverUrl/$endpoint';
   }
 
-  /// Endpoints de la API vLLM (compatible con OpenAI)
-  static const String modelsEndpoint = '/v1/models';
-  static const String chatCompletionsEndpoint = '/v1/chat/completions';
-  static const String completionsEndpoint = '/v1/completions';
-  static const String embeddingsEndpoint = '/v1/embeddings';
-  static const String healthEndpoint = '/health';
+  /// Endpoints de la API Ollama
+  static const String modelsEndpoint = '/api/tags';
+  static const String chatCompletionsEndpoint = '/api/chat';
+  static const String completionsEndpoint = '/api/generate';
+  static const String embeddingsEndpoint = '/api/embeddings';
+  static const String healthEndpoint = '/';
 
   /// Configuración de reintentos
   static const int maxRetries = 3;
@@ -80,18 +80,16 @@ class VllmConfig {
     final name = modelName.toLowerCase();
     return multimodalModels.any((m) => name.contains(m.toLowerCase())) ||
         name.contains('vision') ||
-        name.contains('vl') ||
-        name.contains('pixtral');
+        name.contains('llava') ||
+        name.contains('vl');
   }
 
-  /// Verificar si un modelo es uncensored
-  static bool isUncensoredModel(String modelName) {
+  /// Verificar si es un modelo de código
+  static bool isCodeModel(String modelName) {
     final name = modelName.toLowerCase();
-    return name.contains('dolphin') ||
-        name.contains('openhermes') ||
-        name.contains('nous-hermes') ||
-        name.contains('wizardlm') ||
-        name.contains('uncensored');
+    return name.contains('codellama') ||
+        name.contains('code') ||
+        name.contains('deepseek-coder');
   }
 
   /// Obtener configuración de parámetros por defecto
@@ -101,22 +99,17 @@ class VllmConfig {
     return {
       'temperature': defaultTemperature,
       'top_p': defaultTopP,
-      'max_tokens': maxTokens ?? maxResponseTokens,
-      'frequency_penalty': 0.1,
-      'presence_penalty': 0.1,
+      'num_predict': maxTokens ?? maxResponseTokens,
     };
   }
 
-  /// Estructura de directorios recomendada para la instalación:
+  /// Estructura de directorios para instalación:
   /// LightChat/lightchat.exe - Aplicación principal
-  /// LightChat/vllm/ - Motor vLLM con Python embebido
+  /// LightChat/ollama/ - Modelos Ollama
   /// LightChat/models/ - Modelos incluidos
-  /// LightChat/downloaded_models/ - Modelos descargados por el usuario
-  /// LightChat/cache/ - Caché de modelos HuggingFace
   /// LightChat/data/ - Datos de la aplicación
-  /// LightChat/logs/ - Logs del servidor
   static const Map<String, String> installDirectories = {
-    'vllm': vllmSubdir,
+    'ollama': ollamaSubdir,
     'models': 'models',
     'downloaded': downloadedModelsSubdir,
     'cache': cacheSubdir,
@@ -124,3 +117,6 @@ class VllmConfig {
     'logs': 'logs',
   };
 }
+
+// Alias para compatibilidad hacia atrás
+typedef VllmConfig = OllamaConfig;

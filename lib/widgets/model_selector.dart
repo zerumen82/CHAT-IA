@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/chat_service.dart';
+import '../services/chat_service_ollama.dart';
 
 class ModelSelector extends StatelessWidget {
   const ModelSelector({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ChatService>(
+    return Consumer<ChatServiceOllama>(
       builder: (context, chatService, _) {
         final models = chatService.availableModels;
 

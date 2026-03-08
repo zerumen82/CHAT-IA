@@ -2,9 +2,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'screens/chat_screen.dart';
-import 'services/chat_service.dart';
+import 'services/chat_service_ollama.dart';
 import 'services/theme_service.dart';
-import 'services/vllm_service.dart';
+import 'services/ollama_service.dart';
 import 'services/model_catalog_service.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -39,8 +39,8 @@ class MyApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ThemeService()),
-        ChangeNotifierProvider(create: (_) => ChatService()),
-        ChangeNotifierProvider(create: (_) => VllmService.instance),
+        ChangeNotifierProvider(create: (_) => ChatServiceOllama()),
+        ChangeNotifierProvider(create: (_) => OllamaService.instance),
         ChangeNotifierProvider(create: (_) => ModelCatalogService()),
       ],
       child: Consumer<ThemeService>(builder: (context, themeService, _) {

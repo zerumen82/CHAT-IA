@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
-import '../services/chat_service.dart';
+import '../services/chat_service_ollama.dart';
 
 /// Campo de entrada de chat con soporte multimedia
 class ChatInput extends StatefulWidget {
@@ -101,7 +101,7 @@ class _ChatInputState extends State<ChatInput> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final chatService = context.watch<ChatService>();
+    final chatService = context.watch<ChatServiceOllama>();
     final isConnected = chatService.availableModels.isNotEmpty;
 
     return Container(

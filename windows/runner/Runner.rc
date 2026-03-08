@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
-            VALUE "FileDescription", "lightchat" "\0"
+            VALUE "CompanyName", "Pill Software" "\0"
+            VALUE "FileDescription", "LightChat - Chat con IA Local" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "lightchat" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2025 com.example. All rights reserved." "\0"
+            VALUE "InternalName", "LightChat" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2025 Pill Software. All rights reserved." "\0"
             VALUE "OriginalFilename", "lightchat.exe" "\0"
-            VALUE "ProductName", "lightchat" "\0"
+            VALUE "ProductName", "LightChat" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
