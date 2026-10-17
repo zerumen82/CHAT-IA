@@ -234,7 +234,7 @@ class HardwareDetectorService {
               
               // IMPORTANTE: Priorizar estimación basada en modelo sobre AdapterRAM
               // Windows suele reportar valores incorrectos de VRAM en muchas GPUs
-              final estimatedVram = _estimateVRAMFromModel(gpuModel!);
+              final estimatedVram = _estimateVRAMFromModel(gpuModel);
               
               // Obtener VRAM del AdapterRAM (en bytes) como fallback
               if (data['AdapterRAM'] != null) {
@@ -487,65 +487,74 @@ class HardwareDetectorService {
 
     if (hasGPU && gpuVRAM != null) {
       if (gpuVRAM >= 24) {
-        // RTX 4090 o similar
+        // RTX 4090, 3090 Ti - modelos grandes
         recommendations.addAll([
-          'wizardlm-2-8x22b',
-          'nous-hermes-2-mixtral-8x7b',
-          'dolphin-2.9-llama3-70b',
+          'llama3.1:405b',
+          'mixtral:8x7b',
+          'llama3.1:70b',
+          'codellama:34b',
         ]);
       } else if (gpuVRAM >= 16) {
-        // RTX 4080 o similar
+        // RTX 4080, 4070 Ti - modelos medianos-grandes
         recommendations.addAll([
-          'nous-hermes-2-mixtral-8x7b',
-          'dolphin-2.9-llama3-8b',
-          'mistral-7b-openhermes',
+          'llama3.1:70b',
+          'mixtral:8x7b',
+          'codellama:34b',
+          'deepseek-coder:33b',
         ]);
       } else if (gpuVRAM >= 12) {
-        // RTX 4070, 3090
+        // RTX 4070, 3090 - modelos medianos
         recommendations.addAll([
-          'dolphin-2.9-llama3-8b',
-          'mistral-7b-openhermes',
-          'nous-hermes-2-mixtral-8x7b-q4',
+          'llama3.1:8b',
+          'qwen2.5:7b',
+          'mistral:7b',
+          'codellama:13b',
         ]);
       } else if (gpuVRAM >= 8) {
-        // RTX 3060, 3070, 4060
+        // RTX 3060, 3070, 4060 - modelos pequeños-medianos
         recommendations.addAll([
-          'dolphin-2.9-llama3-8b-q4',
-          'mistral-7b-openhermes-q4',
-          'dolphin-2.6-phi-2',
+          'llama3.2:3b',
+          'phi3:mini',
+          'qwen2.5:3b',
+          'gemma2:2b',
+          'llava:7b',
         ]);
       } else if (gpuVRAM >= 6) {
-        // RTX 3050, etc.
+        // RTX 3050, GTX 1660 - modelos pequeños
         recommendations.addAll([
-          'dolphin-2.6-phi-2',
-          'tinyllama-1.1b-chat',
-          'phi-3-mini',
+          'llama3.2:1b',
+          'tinyllama:1.1b',
+          'phi3:mini',
+          'qwen2.5:0.5b',
         ]);
       } else {
         // GPU con poca VRAM
         recommendations.addAll([
-          'tinyllama-1.1b-chat',
-          'phi-3-mini',
-          'dolphin-2.6-phi-2-q4',
+          'tinyllama:1.1b',
+          'phi3:mini',
+          'qwen2.5:0.5b',
         ]);
       }
     } else {
       // Sin GPU, usar CPU
       if (systemRAM >= 32) {
         recommendations.addAll([
-          'dolphin-2.9-llama3-8b-q4',
-          'mistral-7b-openhermes-q4',
+          'llama3.1:8b',
+          'qwen2.5:7b',
+          'mistral:7b',
         ]);
       } else if (systemRAM >= 16) {
         recommendations.addAll([
-          'dolphin-2.6-phi-2',
-          'tinyllama-1.1b-chat',
-          'phi-3-mini',
+          'llama3.2:3b',
+          'phi3:mini',
+          'qwen2.5:3b',
+          'gemma2:2b',
         ]);
       } else {
         recommendations.addAll([
-          'tinyllama-1.1b-chat',
-          'phi-3-mini-q4',
+          'tinyllama:1.1b',
+          'phi3:mini',
+          'qwen2.5:0.5b',
         ]);
       }
     }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
@@ -13,6 +14,9 @@ class ContextService {
   static const String _ollamaServerKey = 'ollama_server_url';
   static const int _maxContextMessages = 20;
   static const int _maxHistoryMessages = 100;
+
+  /// Timer para debounce de guardado de mensajes (evita escrituras frecuentes en disco)
+  static Timer? _saveMessagesDebounceTimer;
 
   /// Detectar idioma automáticamente - VERSIÓN MEJORADA
   /// Ahora con soporte para 8 idiomas y mejor precisión
@@ -448,6 +452,25 @@ class ContextService {
     } catch (e) {
       debugPrint('Error guardando mensajes: $e');
     }
+  }
+
+  /// Guardar mensajes con debounce (300 ms) para evitar escrituras frecuentes en disco
+  static Future<void> saveMessagesDebounced(List<Message> messages) async {
+    _saveMessagesDebounceTimer?.cancel();
+    _saveMessagesDebounceTimer = Timer(const Duration(milliseconds: 300), () async {
+      await saveMessages(messages);
+    });
+  }
+
+  /// Forzar escritura inmediata de mensajes pendientes (cancelar debounce)
+  static Future<void> flushMessages(List<Message> messages) async {
+    _saveMessagesDebounceTimer?.cancel();
+    await saveMessages(messages);
+  }
+
+  /// Cancelar cualquier guardado pendiente de debounce
+  static void cancelPendingSave() {
+    _saveMessagesDebounceTimer?.cancel();
   }
 
   /// Cargar mensajes desde almacenamiento local

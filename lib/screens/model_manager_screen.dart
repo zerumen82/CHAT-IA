@@ -20,11 +20,21 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
+  // Filtros activos del catálogo
+  bool _filterUncensored = false;
+  bool _filterMultimodal = false;
+  bool _filterRecommended = false;
+
+  // Hardware info cacheado
+  HardwareInfo? _hardwareInfo;
+  bool _hardwareLoading = true;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _searchController.addListener(_onSearchChanged);
+    _loadHardwareInfo();
   }
 
   @override
@@ -40,10 +50,27 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
     });
   }
 
+  Future<void> _loadHardwareInfo() async {
+    final info = await HardwareDetectorService.getHardwareInfo();
+    if (mounted) {
+      setState(() {
+        _hardwareInfo = info;
+        _hardwareLoading = false;
+      });
+    }
+  }
+
+  bool _matchesFilters(LocalModel model) {
+    if (_filterUncensored && !model.isUncensored) return false;
+    if (_filterMultimodal && !model.supportsImages) return false;
+    if (_filterRecommended) {
+      if (model.requiredVram != null && model.requiredVram! > 12) return false;
+    }
+    return true;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Gestión de Modelos'),
@@ -74,10 +101,10 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
     );
   }
 
-  /// Tab de modelos instalados
+  /// Tab de modelos instalados con Consumer propio
   Widget _buildInstalledTab() {
     return Consumer<ModelManagerService>(
-      builder: (context, manager, child) {
+      builder: (context, manager, _) {
         final models = manager.installedModels.where((m) {
           if (_searchQuery.isEmpty) return true;
           return m.name.toLowerCase().contains(_searchQuery) ||
@@ -86,7 +113,6 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
 
         return Column(
           children: [
-            // Barra de búsqueda
             Padding(
               padding: const EdgeInsets.all(8.0),
               child: TextField(
@@ -102,35 +128,8 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
               ),
             ),
 
-            // Espacio usado
-            FutureBuilder<int>(
-              future: manager.getUsedSpace(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) return const SizedBox.shrink();
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Espacio usado:',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                      Text(
-                        manager.formatSize(snapshot.data!),
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-
             const Divider(),
 
-            // Lista de modelos
             Expanded(
               child: models.isEmpty
                   ? _buildEmptyState(
@@ -155,10 +154,10 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
     );
   }
 
-  /// Tab de catálogo online
+  /// Tab de catálogo online con Consumer propio
   Widget _buildCatalogTab() {
     return Consumer<ModelCatalogService>(
-      builder: (context, catalog, child) {
+      builder: (context, catalog, _) {
         if (catalog.isLoading) {
           return const Center(child: CircularProgressIndicator());
         }
@@ -171,11 +170,10 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
           if (_searchQuery.isEmpty) return true;
           return m.name.toLowerCase().contains(_searchQuery) ||
               (m.description?.toLowerCase().contains(_searchQuery) ?? false);
-        }).toList();
+        }).where(_matchesFilters).toList();
 
         return Column(
           children: [
-            // Barra de búsqueda
             Padding(
               padding: const EdgeInsets.all(8.0),
               child: TextField(
@@ -191,7 +189,6 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
               ),
             ),
 
-            // Filtros rápidos
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -199,26 +196,23 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
                 children: [
                   FilterChip(
                     label: const Text('Sin censura'),
-                    selected: false,
-                    onSelected: (selected) {
-                      // TODO: Implementar filtro
-                    },
+                    selected: _filterUncensored,
+                    onSelected: (selected) =>
+                        setState(() => _filterUncensored = selected),
                   ),
                   const SizedBox(width: 8),
                   FilterChip(
                     label: const Text('Multimodal'),
-                    selected: false,
-                    onSelected: (selected) {
-                      // TODO: Implementar filtro
-                    },
+                    selected: _filterMultimodal,
+                    onSelected: (selected) =>
+                        setState(() => _filterMultimodal = selected),
                   ),
                   const SizedBox(width: 8),
                   FilterChip(
                     label: const Text('Recomendados'),
-                    selected: false,
-                    onSelected: (selected) {
-                      // TODO: Implementar filtro
-                    },
+                    selected: _filterRecommended,
+                    onSelected: (selected) =>
+                        setState(() => _filterRecommended = selected),
                   ),
                 ],
               ),
@@ -226,7 +220,6 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
 
             const Divider(),
 
-            // Lista de modelos
             Expanded(
               child: models.isEmpty
                   ? _buildEmptyState(
@@ -251,105 +244,93 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
     );
   }
 
-  /// Tab de información de hardware
+  /// Tab de información de hardware (sin FutureBuilder por build)
   Widget _buildHardwareTab() {
-    return FutureBuilder<HardwareInfo>(
-      future: HardwareDetectorService.getHardwareInfo(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
+    if (_hardwareLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-        final hardware = snapshot.data!;
-        final theme = Theme.of(context);
+    final hardware = _hardwareInfo ??
+        HardwareInfo(
+          cpuModel: 'Unknown',
+          cpuCores: 0,
+          systemRAM: 0,
+          hasGPU: false,
+          recommendedModels: const [],
+        );
 
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildHardwareSection(
+            context,
+            title: 'Procesador',
+            icon: Icons.memory,
             children: [
-              // CPU
-              _buildHardwareSection(
-                context,
-                title: 'Procesador',
-                icon: Icons.memory,
-                children: [
-                  _buildInfoRow('Modelo', hardware.cpuModel),
-                  _buildInfoRow('Núcleos', '${hardware.cpuCores}'),
-                ],
+              _buildInfoRow('Modelo', hardware.cpuModel),
+              _buildInfoRow('Núcleos', '${hardware.cpuCores}'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildHardwareSection(
+            context,
+            title: 'Memoria RAM',
+            icon: Icons.storage,
+            children: [
+              _buildInfoRow('Total', '${hardware.systemRAM} GB'),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildHardwareSection(
+            context,
+            title: 'Tarjeta Gráfica',
+            icon: Icons.videogame_asset,
+            children: hardware.hasGPU
+                ? [
+                    _buildInfoRow(
+                        'Modelo', hardware.gpuModel ?? 'Desconocido'),
+                    _buildInfoRow(
+                      'VRAM',
+                      hardware.gpuVRAM != null
+                          ? '${hardware.gpuVRAM} GB'
+                          : 'Desconocido',
+                    ),
+                  ]
+                : [
+                    _buildInfoRow(
+                      'Estado',
+                      'No se detectó GPU dedicada',
+                      valueColor: Theme.of(context).colorScheme.outline,
+                    ),
+                  ],
+          ),
+          const SizedBox(height: 16),
+          _buildHardwareSection(
+            context,
+            title: 'Modelos Recomendados',
+            icon: Icons.recommend,
+            children: [
+              Text(
+                'Basado en tu hardware, se recomiendan modelos de:',
+                style: Theme.of(context).textTheme.bodySmall,
               ),
-
-              const SizedBox(height: 16),
-
-              // RAM
-              _buildHardwareSection(
-                context,
-                title: 'Memoria RAM',
-                icon: Icons.storage,
-                children: [
-                  _buildInfoRow(
-                    'Total',
-                    '${hardware.systemRAM} GB',
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-
-              // GPU
-              _buildHardwareSection(
-                context,
-                title: 'Tarjeta Gráfica',
-                icon: Icons.videogame_asset,
-                children: hardware.hasGPU
-                    ? [
-                        _buildInfoRow(
-                            'Modelo', hardware.gpuModel ?? 'Desconocido'),
-                        _buildInfoRow(
-                          'VRAM',
-                          hardware.gpuVRAM != null
-                              ? '${hardware.gpuVRAM} GB'
-                              : 'Desconocido',
-                        ),
-                      ]
-                    : [
-                        _buildInfoRow(
-                          'Estado',
-                          'No se detectó GPU dedicada',
-                          valueColor: theme.colorScheme.outline,
-                        ),
-                      ],
-              ),
-
-              const SizedBox(height: 16),
-
-              // Recomendaciones
-              _buildHardwareSection(
-                context,
-                title: 'Modelos Recomendados',
-                icon: Icons.recommend,
-                children: [
-                  Text(
-                    'Basado en tu hardware, se recomiendan modelos de:',
-                    style: theme.textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: hardware.recommendedModels.map((model) {
-                      return Chip(
-                        label: Text(model),
-                        backgroundColor: theme.colorScheme.primaryContainer,
-                      );
-                    }).toList(),
-                  ),
-                ],
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: hardware.recommendedModels.map((model) {
+                  return Chip(
+                    label: Text(model),
+                    backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+                  );
+                }).toList(),
               ),
             ],
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
@@ -417,7 +398,7 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 64, color: Theme.of(context).colorScheme.outline),
+          Icon(icon, size: 64, color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.6)),
           const SizedBox(height: 16),
           Text(
             title,
@@ -463,12 +444,10 @@ class _ModelManagerScreenState extends State<ModelManagerScreen>
   }
 
   Future<void> _refreshModels() async {
-    final manager = context.read<ModelManagerService>();
     final catalog = context.read<ModelCatalogService>();
 
     await Future.wait([
       catalog.refreshCatalog(),
-      // manager.refreshInstalledModels(), // TODO: implementar este método
     ]);
   }
 

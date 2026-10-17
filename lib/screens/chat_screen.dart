@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:lightchat/services/chat_service_ollama.dart';
 import 'package:lightchat/services/ollama_service.dart';
+import 'package:lightchat/models/message.dart';
 import 'package:lightchat/widgets/model_selector.dart';
 import 'package:lightchat/widgets/message_bubble.dart';
 import 'package:lightchat/widgets/capsule_icon.dart';
@@ -25,6 +26,17 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _showConsole = false;
 
   @override
+  void initState() {
+    super.initState();
+    _consoleScrollController.addListener(() {
+      if (_consoleScrollController.position.pixels ==
+          _consoleScrollController.position.maxScrollExtent) {
+        return;
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _scrollController.dispose();
     _consoleScrollController.dispose();
@@ -33,18 +45,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
-      _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
     }
   }
 
   Future<void> _handleSendMessage(String text, List<XFile>? images) async {
     final chatService = context.read<ChatServiceOllama>();
 
-    // Soporte multimodal con Ollama
     List<String>? imagePaths;
     if (images != null && images.isNotEmpty) {
       imagePaths = images.map((img) => img.path).toList();
@@ -59,7 +66,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (text.isNotEmpty) {
       await chatService.sendMessage(text, imagePaths: imagePaths);
-      Future.delayed(const Duration(milliseconds: 100), _scrollToBottom);
+      _scrollToBottom();
+    }
+  }
+
+  void _retryMessage(Message message) {
+    final chatService = context.read<ChatServiceOllama>();
+    if (message.text.isNotEmpty) {
+      chatService.sendMessage(message.text);
     }
   }
 
@@ -75,7 +89,6 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           Column(
             children: [
-              // Widget de estado de Ollama cuando no hay conexión
               Consumer<OllamaService>(
                 builder: (context, ollama, _) {
                   if (chatService.availableModels.isEmpty &&
@@ -86,15 +99,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 },
               ),
 
-              // Lista de mensajes
               Expanded(
                 child: _buildMessageList(chatService),
               ),
 
-              // Indicador de carga
-              if (chatService.isLoading) _buildLoadingIndicator(context),
+              if (chatService.isLoading) _buildTypingIndicator(context),
 
-              // Campo de entrada
               ChatInput(
                 onSendMessage: _handleSendMessage,
                 enabled: !chatService.isLoading,
@@ -103,14 +113,12 @@ class _ChatScreenState extends State<ChatScreen> {
             ],
           ),
 
-          // Botón flotante de consola
           Positioned(
             bottom: 80,
             right: 16,
             child: _buildConsoleToggleButton(),
           ),
 
-          // Consola flotante
           if (_showConsole) _buildFloatingConsole(),
         ],
       ),
@@ -162,12 +170,8 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
       actions: [
-        // Selector de modelo
         const ModelSelector(),
-
         const SizedBox(width: 8),
-
-        // Menú de acciones
         PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert),
           tooltip: 'Más opciones',
@@ -203,9 +207,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
             ),
+            const PopupMenuDivider(),
           ],
         ),
-
         const SizedBox(width: 8),
       ],
     );
@@ -223,8 +227,8 @@ class _ChatScreenState extends State<ChatScreen> {
         shape: BoxShape.circle,
         boxShadow: [
           BoxShadow(
-            color:
-                (isConnected ? Colors.green : colorScheme.error).withAlpha(77),
+            color: (isConnected ? Colors.green : colorScheme.error)
+                .withAlpha(77),
             blurRadius: 4,
             spreadRadius: 1,
           ),
@@ -233,11 +237,9 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// Botón para mostrar/ocultar consola
   Widget _buildConsoleToggleButton() {
     return Consumer<OllamaService>(
       builder: (context, ollama, _) {
-        // Solo mostrar si el servidor está corriendo o iniciando
         if (ollama.serverInfo.status != OllamaStatus.running &&
             ollama.serverInfo.status != OllamaStatus.starting) {
           return const SizedBox.shrink();
@@ -273,21 +275,9 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// Consola flotante con stdout/stderr
   Widget _buildFloatingConsole() {
     return Consumer<OllamaService>(
       builder: (context, ollama, _) {
-        // Auto-scroll al final cuando llegan nuevos logs
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_consoleScrollController.hasClients) {
-            _consoleScrollController.animateTo(
-              _consoleScrollController.position.maxScrollExtent,
-              duration: const Duration(milliseconds: 100),
-              curve: Curves.easeOut,
-            );
-          }
-        });
-
         return Positioned(
           bottom: 130,
           right: 16,
@@ -304,13 +294,13 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             child: Column(
               children: [
-                // Header de la consola
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color:
-                        Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest,
                     border: Border(
                       bottom: BorderSide(
                           color: Theme.of(context).colorScheme.outline),
@@ -330,20 +320,18 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                       Row(
                         children: [
-                          // Indicador de estado
                           Container(
                             width: 8,
                             height: 8,
                             decoration: BoxDecoration(
-                              color:
-                                  ollama.serverInfo.status == OllamaStatus.running
-                                      ? Colors.green
-                                      : Colors.orange,
+                              color: ollama.serverInfo.status ==
+                                      OllamaStatus.running
+                                  ? Colors.green
+                                  : Colors.orange,
                               shape: BoxShape.circle,
                             ),
                           ),
                           const SizedBox(width: 8),
-                          // Botón cerrar
                           GestureDetector(
                             onTap: () {
                               setState(() {
@@ -363,11 +351,11 @@ class _ChatScreenState extends State<ChatScreen> {
                     ],
                   ),
                 ),
-
-                // Contenido de la consola
                 Expanded(
                   child: Container(
-                    color: Theme.of(context).colorScheme.surfaceContainerLow,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerLow,
                     child: ListView.builder(
                       controller: _consoleScrollController,
                       padding: const EdgeInsets.all(4),
@@ -379,14 +367,13 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 ),
-
-                // Footer con acciones
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color:
-                        Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest,
                     border: Border(
                       top: BorderSide(
                           color: Theme.of(context).colorScheme.outline),
@@ -395,7 +382,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
-                      // Botón copiar
                       TextButton.icon(
                         onPressed: () => _copyLogs(ollama.logs.join('\n')),
                         icon: const Icon(Icons.copy, size: 14),
@@ -407,19 +393,6 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      // Botón limpiar
-                      TextButton.icon(
-                        onPressed: () {
-                          // Ollama no tiene clearLogs, es un getter
-                        },
-                        icon: const Icon(Icons.clear_all, size: 14),
-                        label: const Text('LIMPIAR'),
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          minimumSize: Size.zero,
-                        ),
-                      ),
                     ],
                   ),
                 ),
@@ -431,16 +404,9 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// Parsear líneas de consola
-  List<String> _parseConsoleLines(String logs) {
-    return logs.split('\n').where((line) => line.trim().isNotEmpty).toList();
-  }
-
-  /// Construir línea de consola con color según tipo
   Widget _buildConsoleLine(String line) {
     Color textColor = Theme.of(context).colorScheme.onSurfaceVariant;
 
-    // Colorear según tipo de mensaje
     if (line.contains('ERROR') ||
         line.contains('Error') ||
         line.contains('error')) {
@@ -478,7 +444,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// Copiar logs al portapapeles
   void _copyLogs(String logs) {
     Clipboard.setData(ClipboardData(text: logs));
     ScaffoldMessenger.of(context).showSnackBar(
@@ -503,7 +468,22 @@ class _ChatScreenState extends State<ChatScreen> {
       itemCount: messages.length,
       itemBuilder: (context, index) {
         final message = messages[index];
-        return MessageBubble(message: message);
+        return MessageBubble(
+          message: message,
+          onRetry: message.isError ? () => _retryMessage(message) : null,
+          onCopy: () {
+            Clipboard.setData(ClipboardData(text: message.text));
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Respuesta copiada'),
+                duration: Duration(milliseconds: 1500),
+                behavior: SnackBarBehavior.floating,
+                margin: EdgeInsets.only(bottom: 80, left: 16, right: 16),
+              ),
+            );
+          },
+          onImageTap: () {},
+        );
       },
     );
   }
@@ -515,7 +495,6 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Icono
           Container(
             width: 80,
             height: 80,
@@ -529,10 +508,7 @@ class _ChatScreenState extends State<ChatScreen> {
               color: colorScheme.onPrimaryContainer,
             ),
           ),
-
           const SizedBox(height: 24),
-
-          // Título
           Text(
             '¡Bienvenido a LightChat!',
             style: TextStyle(
@@ -541,10 +517,7 @@ class _ChatScreenState extends State<ChatScreen> {
               color: colorScheme.onSurface,
             ),
           ),
-
           const SizedBox(height: 8),
-
-          // Subtítulo
           Text(
             'Inicia una conversación con tu IA favorita',
             style: TextStyle(
@@ -552,18 +525,30 @@ class _ChatScreenState extends State<ChatScreen> {
               color: colorScheme.onSurfaceVariant,
             ),
           ),
+          const SizedBox(height: 24),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (context) => const OllamaManagerScreen(),
+                  fullscreenDialog: true,
+                ),
+              );
+            },
+            icon: const Icon(Icons.smart_toy),
+            label: const Text('Conectar Ollama'),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildLoadingIndicator(BuildContext context) {
+  Widget _buildTypingIndicator(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
           SizedBox(
             width: 20,
@@ -575,10 +560,11 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           const SizedBox(width: 12),
           Text(
-            'Pensando...',
+            'Escribiendo…',
             style: TextStyle(
               color: colorScheme.onSurfaceVariant,
               fontSize: 14,
+              fontStyle: FontStyle.italic,
             ),
           ),
         ],
@@ -588,12 +574,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   String _getHintText(ChatServiceOllama chatService) {
     if (chatService.availableModels.isEmpty) {
-      return 'Conecta Ollama primero...';
+      return 'Conecta Ollama primero…';
     }
     if (chatService.isLoading) {
-      return 'Esperando respuesta...';
+      return 'Esperando respuesta…';
     }
-    return 'Escribe un mensaje...';
+    return 'Escribe un mensaje…';
   }
 
   void _handleMenuAction(String action, ChatServiceOllama chatService) {
@@ -613,7 +599,7 @@ class _ChatScreenState extends State<ChatScreen> {
         chatService.loadModels();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Recargando modelos...'),
+            content: Text('Recargando modelos…'),
             duration: Duration(seconds: 1),
             behavior: SnackBarBehavior.floating,
           ),

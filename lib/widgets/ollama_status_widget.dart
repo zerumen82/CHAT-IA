@@ -15,10 +15,10 @@ class OllamaQuickConnect extends StatelessWidget {
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: colorScheme.errorContainer.withOpacity(0.3),
+        color: colorScheme.errorContainer.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: colorScheme.error.withOpacity(0.3),
+          color: colorScheme.error.withValues(alpha: 0.3),
         ),
       ),
       child: Column(
@@ -102,19 +102,15 @@ class OllamaStatusWidget extends StatelessWidget {
       builder: (context, ollama, _) {
         final status = ollama.serverInfo.status;
         final isRunning = status == OllamaStatus.running;
-        final hasModels = ollama.models.isNotEmpty;
+        final statusColor = isRunning ? Colors.green : Colors.orange;
 
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: isRunning
-                ? Colors.green.withOpacity(0.1)
-                : Colors.orange.withOpacity(0.1),
+            color: statusColor.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: isRunning
-                  ? Colors.green.withOpacity(0.3)
-                  : Colors.orange.withOpacity(0.3),
+              color: statusColor.withValues(alpha: 0.3),
             ),
           ),
           child: Row(
@@ -124,7 +120,7 @@ class OllamaStatusWidget extends StatelessWidget {
                 width: 8,
                 height: 8,
                 decoration: BoxDecoration(
-                  color: isRunning ? Colors.green : Colors.orange,
+                  color: statusColor,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -136,7 +132,9 @@ class OllamaStatusWidget extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: isRunning ? Colors.green.shade700 : Colors.orange.shade800,
+                  color: isRunning
+                      ? Colors.green.shade700
+                      : Colors.orange.shade800,
                 ),
               ),
             ],
