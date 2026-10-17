@@ -561,10 +561,11 @@ class OllamaService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// URL de la API de Ollama para listar modelos disponibles para descarga
-  static const String _ollamaApiModels = 'https://ollama.com/v1/models';
+  /// URL de la API comunitaria de Ollama (ollamadb.dev) con el catálogo completo
+  /// de modelos disponibles (4370+ modelos con tamaño, pulls, tags, etc.)
+  static const String _ollamaModelsApi = 'https://ollamadb.dev/api/v1/models';
 
-  /// Modelos disponibles para descargar (obtenidos de ollama.com/v1/models)
+  /// Modelos disponibles para descargar (obtenidos de ollamadb.dev)
   List<Map<String, dynamic>> _availableModels = [];
   List<Map<String, dynamic>> get availableModels => _availableModels;
 
@@ -572,7 +573,7 @@ class OllamaService extends ChangeNotifier {
   DateTime? _availableModelsLastUpdate;
   DateTime? get availableModelsLastUpdate => _availableModelsLastUpdate;
 
-  /// Descargar lista de modelos disponibles desde ollama.com/v1/models
+  /// Descargar lista de modelos disponibles desde ollamadb.dev
   /// Devuelve la lista completa de modelos disponibles para `ollama pull`
   Future<List<Map<String, dynamic>>> fetchAvailableModels({
     bool forceRefresh = false,
@@ -586,13 +587,14 @@ class OllamaService extends ChangeNotifier {
     }
 
     _availableModels = [];
-    _addLog('Consultando modelos disponibles en ollama.com...');
+    _addLog('Consultando catálogo de modelos en ollamadb.dev...');
 
     try {
-      final uri = Uri.parse(_ollamaApiModels);
+      final uri = Uri.parse(
+          '$_ollamaModelsApi?limit=200&sort_by=pulls&order=desc');
       final response = await http
           .get(uri)
-          .timeout(const Duration(seconds: 15));
+          .timeout(const Duration(seconds: 20));
 
       if (response.statusCode != 200) {
         _addLog(
@@ -603,11 +605,14 @@ class OllamaService extends ChangeNotifier {
       }
 
       final data = json.decode(response.body);
-      final modelsList = (data['data'] as List<dynamic>? ?? []);
+      final modelsList = (data['models'] as List<dynamic>? ?? []);
 
       final results = <Map<String, dynamic>>[];
       for (final model in modelsList) {
-        final modelId = model['id'] as String? ?? '';
+        final modelId = model['model_identifier'] as String? ??
+            model['model_name'] as String? ??
+            model['id'] as String? ??
+            '';
         if (modelId.isEmpty) continue;
 
         // Separar nombre y tag (ej: "llama3.2:3b" -> repo: "llama3.2", tag: "3b")
@@ -615,25 +620,50 @@ class OllamaService extends ChangeNotifier {
         final repo = parts[0];
         final tag = parts.length > 1 ? parts[1] : 'latest';
 
+        // Obtener tamaño desde las etiquetas (ej: "8B", "70B", "405B")
+        final labels = (model['labels'] as List<dynamic>?)
+            ?.cast<String>() ?? [];
+        final size = _estimateSizeFromLabels(labels);
+
         results.add({
           'name': modelId,
           'repository': repo,
-          'tags': [tag],
-          'description': _getModelDescription(repo),
-          'size': 'Desconocido',
+          'tags': [...labels, tag]..toSet().toList(),
+          'description': model['description'] as String? ??
+              _getModelDescription(repo),
+          'size': size,
+          'pulls': model['pulls'] as int? ?? 0,
           'multimodal': _isMultimodalRepo(repo, modelId),
         });
       }
 
       _availableModels = results;
       _availableModelsLastUpdate = DateTime.now();
-      _addLog('${_availableModels.length} modelos disponibles en ollama.com');
+      _addLog('${_availableModels.length} modelos disponibles en ollamadb.dev');
       return _availableModels;
     } catch (e) {
-      _addLog('Error consultando modelos de ollama.com: $e');
+      _addLog('Error consultando modelos de ollamadb.dev: $e');
       _availableModelsLastUpdate = DateTime.now();
       return _availableModels;
     }
+  }
+
+  /// Estimar tamaño basado en las etiquetas del modelo (ej: "8B", "70B")
+  String _estimateSizeFromLabels(List<String> labels) {
+    for (final label in labels) {
+      final lower = label.toLowerCase();
+      if (lower.contains('405b')) return '~230 GB';
+      if (lower.contains('70b')) return '~40 GB';
+      if (lower.contains('34b') || lower.contains('35b')) return '~20 GB';
+      if (lower.contains('13b') || lower.contains('14b')) return '~8 GB';
+      if (lower.contains('9b')) return '~5 GB';
+      if (lower.contains('8b')) return '~5 GB';
+      if (lower.contains('7b')) return '~4 GB';
+      if (lower.contains('3b')) return '~2 GB';
+      if (lower.contains('2b')) return '~1.5 GB';
+      if (lower.contains('1b') || lower.contains('0.5b')) return '~800 MB';
+    }
+    return 'Desconocido';
   }
 
   /// Obtener descripción legible basada en el nombre del repositorio
