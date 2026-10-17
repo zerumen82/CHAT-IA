@@ -561,10 +561,10 @@ class OllamaService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// URL del registry público de Ollama (para listar modelos disponibles para descargar)
-  static const String _ollamaRegistryApi = 'https://registry.ollama.ai';
+  /// URL de la API de Ollama para listar modelos disponibles para descarga
+  static const String _ollamaApiModels = 'https://ollama.com/v1/models';
 
-  /// Modelos disponibles para descargar desde el registry de Ollama (caché dinámica)
+  /// Modelos disponibles para descargar (obtenidos de ollama.com/v1/models)
   List<Map<String, dynamic>> _availableModels = [];
   List<Map<String, dynamic>> get availableModels => _availableModels;
 
@@ -572,8 +572,8 @@ class OllamaService extends ChangeNotifier {
   DateTime? _availableModelsLastUpdate;
   DateTime? get availableModelsLastUpdate => _availableModelsLastUpdate;
 
-  /// Descargar lista de modelos disponibles desde el registry de Ollama
-  /// Consulta _catalog y luego obtiene los tags de cada repositorio
+  /// Descargar lista de modelos disponibles desde ollama.com/v1/models
+  /// Devuelve la lista completa de modelos disponibles para `ollama pull`
   Future<List<Map<String, dynamic>>> fetchAvailableModels({
     bool forceRefresh = false,
   }) async {
@@ -586,67 +586,52 @@ class OllamaService extends ChangeNotifier {
     }
 
     _availableModels = [];
-    _addLog('Consultando registry de Ollama para modelos disponibles...');
+    _addLog('Consultando modelos disponibles en ollama.com...');
 
     try {
-      // Obtener lista de repositorios disponibles
-      final catalogUri = Uri.parse('$_ollamaRegistryApi/v2/_catalog');
-      final catalogResponse = await http
-          .get(catalogUri)
+      final uri = Uri.parse(_ollamaApiModels);
+      final response = await http
+          .get(uri)
           .timeout(const Duration(seconds: 15));
 
-      if (catalogResponse.statusCode != 200) {
-        _addLog('Error consultando registry: HTTP ${catalogResponse.statusCode}');
+      if (response.statusCode != 200) {
+        _addLog(
+            'Error consultando modelos: HTTP ${response.statusCode}. '
+            'Usa "Instalar modelo personalizado" para descargar modelos.');
+        _availableModelsLastUpdate = DateTime.now();
         return _availableModels;
       }
 
-      final catalogData = json.decode(catalogResponse.body);
-      final repositories = (catalogData['repositories'] as List<dynamic>?)
-          ?.cast<String>() ?? [];
+      final data = json.decode(response.body);
+      final modelsList = (data['data'] as List<dynamic>? ?? []);
 
-      // Para cada repositorio, obtener sus tags (versiones disponibles)
       final results = <Map<String, dynamic>>[];
-      for (final repo in repositories.take(50)) {
-        try {
-          final tagsUri = Uri.parse(
-              '$_ollamaRegistryApi/v2/$repo/tags/list');
-          final tagsResponse = await http
-              .get(tagsUri)
-              .timeout(const Duration(seconds: 10));
+      for (final model in modelsList) {
+        final modelId = model['id'] as String? ?? '';
+        if (modelId.isEmpty) continue;
 
-          if (tagsResponse.statusCode != 200) continue;
+        // Separar nombre y tag (ej: "llama3.2:3b" -> repo: "llama3.2", tag: "3b")
+        final parts = modelId.split(':');
+        final repo = parts[0];
+        final tag = parts.length > 1 ? parts[1] : 'latest';
 
-          final tagsData = json.decode(tagsResponse.body);
-          final tags = (tagsData['tags'] as List<dynamic>?)
-              ?.cast<String>() ?? [];
-
-          if (tags.isEmpty) continue;
-
-          // Obtener información del modelo para descripción y tamaño
-          final modelInfo = await showModel('$repo:latest');
-
-          results.add({
-            'name': '$repo:${tags.first}',
-            'repository': repo,
-            'tags': tags,
-            'description': _getModelDescription(repo),
-            'size': modelInfo != null
-                ? _estimateSizeFromInfo(modelInfo)
-                : 'Desconocido',
-            'multimodal': _isMultimodalRepo(repo, tags),
-          });
-        } catch (e) {
-          debugPrint('Error obteniendo tags de $repo: $e');
-          continue;
-        }
+        results.add({
+          'name': modelId,
+          'repository': repo,
+          'tags': [tag],
+          'description': _getModelDescription(repo),
+          'size': 'Desconocido',
+          'multimodal': _isMultimodalRepo(repo, modelId),
+        });
       }
 
       _availableModels = results;
       _availableModelsLastUpdate = DateTime.now();
-      _addLog('${_availableModels.length} modelos disponibles en el registry');
+      _addLog('${_availableModels.length} modelos disponibles en ollama.com');
       return _availableModels;
     } catch (e) {
-      _addLog('Error consultando registry de Ollama: $e');
+      _addLog('Error consultando modelos de ollama.com: $e');
+      _availableModelsLastUpdate = DateTime.now();
       return _availableModels;
     }
   }
@@ -673,90 +658,14 @@ class OllamaService extends ChangeNotifier {
     return 'Modelo disponible en Ollama';
   }
 
-  /// Estimar tamaño basado en la información del modelo
-  String _estimateSizeFromInfo(Map<String, dynamic>? info) {
-    if (info == null) return 'Desconocido';
-    final details = info['details'] as Map<String, dynamic>?;
-    if (details == null) return 'Desconocido';
-
-    final paramSize = details['parameter_size'] as String? ?? '';
-    final quant = details['quantization_level'] as String? ?? '';
-
-    if (paramSize.contains('405b')) return '~230 GB';
-    if (paramSize.contains('70b')) {
-      return quant.contains('q4') ? '~40 GB' : '~140 GB';
-    }
-    if (paramSize.contains('34b') || paramSize.contains('35b')) {
-      return quant.contains('q4') ? '~20 GB' : '~70 GB';
-    }
-    if (paramSize.contains('13b') || paramSize.contains('14b')) {
-      return quant.contains('q4') ? '~8 GB' : '~26 GB';
-    }
-    if (paramSize.contains('8b') || paramSize.contains('9b')) {
-      return quant.contains('q4') ? '~5 GB' : '~16 GB';
-    }
-    if (paramSize.contains('7b')) {
-      return quant.contains('q4') ? '~4 GB' : '~15 GB';
-    }
-    if (paramSize.contains('3b')) {
-      return quant.contains('q4') ? '~2 GB' : '~8 GB';
-    }
-    if (paramSize.contains('2b')) {
-      return quant.contains('q4') ? '~1.5 GB' : '~5 GB';
-    }
-    if (paramSize.contains('1b')) {
-      return quant.contains('q4') ? '~800 MB' : '~4 GB';
-    }
-    return 'Desconocido';
-  }
-
-  /// Detectar si un repositorio es multimodal basado en nombre y tags
-  bool _isMultimodalRepo(String repo, List<String> tags) {
-    final all = (repo + ' ' + tags.join(' ')).toLowerCase();
+  /// Detectar si un modelo es multimodal basado en el nombre
+  bool _isMultimodalRepo(String repo, String modelId) {
+    final all = (repo + ' ' + modelId).toLowerCase();
     return all.contains('llava') ||
         all.contains('vision') ||
         all.contains('multimodal') ||
         all.contains('vl') ||
         all.contains('pixtral');
-  }
-
-  /// Verificar si un modelo existe en el registry de Ollama (para validar antes de pull)
-  Future<bool> modelExistsInRegistry(String modelName) async {
-    try {
-      // Si ya tiene tag, verificar directamente
-      if (modelName.contains(':')) {
-        final parts = modelName.split(':');
-        final repo = parts[0];
-        final tag = parts[1];
-
-        final tagsUri = Uri.parse('$_ollamaRegistryApi/v2/$repo/tags/list');
-        final response = await http
-            .get(tagsUri)
-            .timeout(const Duration(seconds: 10));
-
-        if (response.statusCode == 200) {
-          final data = json.decode(response.body);
-          final tags = (data['tags'] as List<dynamic>?)?.cast<String>() ?? [];
-          return tags.contains(tag);
-        }
-      } else {
-        // Sin tag, verificar si el repo existe
-        final catalogUri = Uri.parse('$_ollamaRegistryApi/v2/_catalog');
-        final response = await http
-            .get(catalogUri)
-            .timeout(const Duration(seconds: 10));
-
-        if (response.statusCode == 200) {
-          final data = json.decode(response.body);
-          final repos = (data['repositories'] as List<dynamic>?)
-              ?.cast<String>() ?? [];
-          return repos.contains(modelName);
-        }
-      }
-      return false;
-    } catch (e) {
-      return false;
-    }
   }
 
   /// Verificar si Ollama está instalado en el sistema

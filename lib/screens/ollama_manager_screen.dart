@@ -27,8 +27,10 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
       if (!ollamaService.isInitialized) {
         ollamaService.initialize();
       }
-      // Cargar modelos disponibles desde el registry de Ollama
+      // Cargar modelos disponibles desde ollama.com/v1/models
       ollamaService.fetchAvailableModels();
+      // Cargar modelos instalados localmente
+      ollamaService.checkInstallation();
     });
   }
 
@@ -225,11 +227,12 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
     );
   }
 
-  /// Catálogo de modelos con Consumer propio
+  /// Catálogo de modelos disponibles para descargar (de ollama.com/v1/models)
   Widget _buildModelsTab() {
     return Consumer<OllamaService>(
       builder: (context, ollama, _) {
         final colorScheme = Theme.of(context).colorScheme;
+        final available = ollama.availableModels;
 
         return Column(
           children: [
@@ -241,7 +244,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                     setState(() => _searchQuery = value.toLowerCase()),
                 style: TextStyle(color: colorScheme.onSurface),
                 decoration: InputDecoration(
-                  hintText: 'Buscar modelo (ej: llama3, mistral, codellama)...',
+                  hintText: 'Buscar modelo para descargar (ej: llama3, mistral, dolphin3)...',
                   hintStyle: TextStyle(
                     color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                   ),
@@ -251,7 +254,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                   ),
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.refresh),
-                    tooltip: 'Actualizar catálogo desde Ollama',
+                    tooltip: 'Actualizar catálogo desde ollama.com',
                     onPressed: () async {
                       await ollama.fetchAvailableModels(forceRefresh: true);
                       if (mounted) setState(() {});
@@ -275,7 +278,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
 
             const SizedBox(height: 8),
 
-            // Indicador de cuántos modelos hay disponibles
+            // Indicador de modelos disponibles
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
@@ -286,11 +289,13 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                     color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                   ),
                   const SizedBox(width: 6),
-                  Text(
-                    '${ollama.availableModels.length} modelos disponibles en el registry de Ollama',
-                    style: TextStyle(
-                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                      fontSize: 12,
+                  Expanded(
+                    child: Text(
+                      '${available.length} modelo(s) disponible(s) para descargar',
+                      style: TextStyle(
+                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                        fontSize: 12,
+                      ),
                     ),
                   ),
                   if (ollama.availableModelsLastUpdate != null) ...[
@@ -312,7 +317,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
             const SizedBox(height: 8),
 
             Expanded(
-              child: ollama.availableModels.isEmpty
+              child: available.isEmpty
                   ? Center(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -332,7 +337,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'Asegúrate de tener conexión a internet y Ollama ejecutándose',
+                            'Asegúrate de tener conexión a internet',
                             style: TextStyle(
                               color: colorScheme.onSurfaceVariant.withValues(
                                 alpha: 0.6,
@@ -356,9 +361,9 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                     )
                   : ListView.builder(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: ollama.availableModels.length,
+                      itemCount: available.length,
                       itemBuilder: (context, index) {
-                        final model = ollama.availableModels[index];
+                        final model = available[index];
                         final name = model['name'] as String;
 
                         final tagsList =
@@ -378,12 +383,12 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                         }
 
                         final isInstalled =
-                            ollama.models.any((m) => m.name.startsWith(name));
+                            ollama.models.any((m) => m.name == name);
                         final isPulling =
                             ollama.isPulling &&
                             ollama.pullingModel == name;
 
-                        return _buildModelCard(
+                        return _buildAvailableModelCard(
                           model,
                           isInstalled,
                           isPulling,
@@ -398,16 +403,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
     );
   }
 
-  /// Formatear tiempo relativo (ej: "hace 5 minutos")
-  String _formatRelativeTime(DateTime time) {
-    final diff = DateTime.now().difference(time);
-    if (diff.inMinutes < 1) return 'ahora';
-    if (diff.inHours < 1) return 'hace ${diff.inMinutes} min';
-    if (diff.inDays < 1) return 'hace ${diff.inHours} h';
-    return 'hace ${diff.inDays} días';
-  }
-
-  Widget _buildModelCard(
+  /// Tarjeta de modelo disponible para descargar (del catálogo de ollama.com)
+  Widget _buildAvailableModelCard(
     Map<String, dynamic> model,
     bool isInstalled,
     bool isPulling,
@@ -419,7 +416,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
     final description = model['description'] as String;
     final tags =
         (model['tags'] as List<dynamic>?)?.cast<String>() ?? [];
-    final size = model['size'] as String? ?? 'Unknown';
+    final size = model['size'] as String? ?? 'Desconocido';
     final isMultimodal = model['multimodal'] == true;
     final isUncensored = tags.any((t) => t.toLowerCase().contains('uncensored'));
 
@@ -624,6 +621,15 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
         ),
       ),
     );
+  }
+
+  /// Formatear tiempo relativo (ej: "hace 5 minutos")
+  String _formatRelativeTime(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return 'ahora';
+    if (diff.inHours < 1) return 'hace ${diff.inMinutes} min';
+    if (diff.inDays < 1) return 'hace ${diff.inHours} h';
+    return 'hace ${diff.inDays} días';
   }
 
   /// Modelos instalados con Consumer propio
