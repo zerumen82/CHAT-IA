@@ -49,8 +49,9 @@ class OllamaModel {
     if (size == null) return 'Unknown';
     final bytes = size!;
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024)
+    if (bytes < 1024 * 1024 * 1024) {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
 
@@ -560,6 +561,204 @@ class OllamaService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// URL del registry público de Ollama (para listar modelos disponibles para descargar)
+  static const String _ollamaRegistryApi = 'https://registry.ollama.ai';
+
+  /// Modelos disponibles para descargar desde el registry de Ollama (caché dinámica)
+  List<Map<String, dynamic>> _availableModels = [];
+  List<Map<String, dynamic>> get availableModels => _availableModels;
+
+  /// Timestamp de última actualización del catálogo remoto
+  DateTime? _availableModelsLastUpdate;
+  DateTime? get availableModelsLastUpdate => _availableModelsLastUpdate;
+
+  /// Descargar lista de modelos disponibles desde el registry de Ollama
+  /// Consulta _catalog y luego obtiene los tags de cada repositorio
+  Future<List<Map<String, dynamic>>> fetchAvailableModels({
+    bool forceRefresh = false,
+  }) async {
+    // Si ya tenemos caché reciente (menos de 1 hora) y no se fuerza refresh
+    if (!forceRefresh &&
+        _availableModels.isNotEmpty &&
+        _availableModelsLastUpdate != null &&
+        DateTime.now().difference(_availableModelsLastUpdate!).inHours < 1) {
+      return _availableModels;
+    }
+
+    _availableModels = [];
+    _addLog('Consultando registry de Ollama para modelos disponibles...');
+
+    try {
+      // Obtener lista de repositorios disponibles
+      final catalogUri = Uri.parse('$_ollamaRegistryApi/v2/_catalog');
+      final catalogResponse = await http
+          .get(catalogUri)
+          .timeout(const Duration(seconds: 15));
+
+      if (catalogResponse.statusCode != 200) {
+        _addLog('Error consultando registry: HTTP ${catalogResponse.statusCode}');
+        return _availableModels;
+      }
+
+      final catalogData = json.decode(catalogResponse.body);
+      final repositories = (catalogData['repositories'] as List<dynamic>?)
+          ?.cast<String>() ?? [];
+
+      // Para cada repositorio, obtener sus tags (versiones disponibles)
+      final results = <Map<String, dynamic>>[];
+      for (final repo in repositories.take(50)) {
+        try {
+          final tagsUri = Uri.parse(
+              '$_ollamaRegistryApi/v2/$repo/tags/list');
+          final tagsResponse = await http
+              .get(tagsUri)
+              .timeout(const Duration(seconds: 10));
+
+          if (tagsResponse.statusCode != 200) continue;
+
+          final tagsData = json.decode(tagsResponse.body);
+          final tags = (tagsData['tags'] as List<dynamic>?)
+              ?.cast<String>() ?? [];
+
+          if (tags.isEmpty) continue;
+
+          // Obtener información del modelo para descripción y tamaño
+          final modelInfo = await showModel('$repo:latest');
+
+          results.add({
+            'name': '$repo:${tags.first}',
+            'repository': repo,
+            'tags': tags,
+            'description': _getModelDescription(repo),
+            'size': modelInfo != null
+                ? _estimateSizeFromInfo(modelInfo)
+                : 'Desconocido',
+            'multimodal': _isMultimodalRepo(repo, tags),
+          });
+        } catch (e) {
+          debugPrint('Error obteniendo tags de $repo: $e');
+          continue;
+        }
+      }
+
+      _availableModels = results;
+      _availableModelsLastUpdate = DateTime.now();
+      _addLog('${_availableModels.length} modelos disponibles en el registry');
+      return _availableModels;
+    } catch (e) {
+      _addLog('Error consultando registry de Ollama: $e');
+      return _availableModels;
+    }
+  }
+
+  /// Obtener descripción legible basada en el nombre del repositorio
+  String _getModelDescription(String repo) {
+    final lower = repo.toLowerCase();
+    if (lower.contains('llama3')) return 'Meta Llama 3 - Modelo generalista';
+    if (lower.contains('llama3.2')) return 'Meta Llama 3.2 - Balance rendimiento/tamaño';
+    if (lower.contains('llama3.1')) return 'Meta Llama 3.1 - Modelo principal';
+    if (lower.contains('mistral')) return 'Mistral AI - Rápido y eficiente';
+    if (lower.contains('qwen')) return 'Qwen - Multilingüe excelente';
+    if (lower.contains('phi')) return 'Microsoft Phi - Muy rápido';
+    if (lower.contains('gemma')) return 'Google Gemma - Abierto y eficiente';
+    if (lower.contains('code')) return 'Modelo especializado en código';
+    if (lower.contains('llava')) return 'LLaVA - Multimodal (visión + texto)';
+    if (lower.contains('dolphin') ||
+        lower.contains('nous-hermes') ||
+        lower.contains('wizardlm') ||
+        lower.contains('openhermes')) {
+      return 'Modelo sin restricciones (uncensored)';
+    }
+    if (lower.contains('tinyllama')) return 'Modelo muy ligero para CPU';
+    return 'Modelo disponible en Ollama';
+  }
+
+  /// Estimar tamaño basado en la información del modelo
+  String _estimateSizeFromInfo(Map<String, dynamic>? info) {
+    if (info == null) return 'Desconocido';
+    final details = info['details'] as Map<String, dynamic>?;
+    if (details == null) return 'Desconocido';
+
+    final paramSize = details['parameter_size'] as String? ?? '';
+    final quant = details['quantization_level'] as String? ?? '';
+
+    if (paramSize.contains('405b')) return '~230 GB';
+    if (paramSize.contains('70b')) {
+      return quant.contains('q4') ? '~40 GB' : '~140 GB';
+    }
+    if (paramSize.contains('34b') || paramSize.contains('35b')) {
+      return quant.contains('q4') ? '~20 GB' : '~70 GB';
+    }
+    if (paramSize.contains('13b') || paramSize.contains('14b')) {
+      return quant.contains('q4') ? '~8 GB' : '~26 GB';
+    }
+    if (paramSize.contains('8b') || paramSize.contains('9b')) {
+      return quant.contains('q4') ? '~5 GB' : '~16 GB';
+    }
+    if (paramSize.contains('7b')) {
+      return quant.contains('q4') ? '~4 GB' : '~15 GB';
+    }
+    if (paramSize.contains('3b')) {
+      return quant.contains('q4') ? '~2 GB' : '~8 GB';
+    }
+    if (paramSize.contains('2b')) {
+      return quant.contains('q4') ? '~1.5 GB' : '~5 GB';
+    }
+    if (paramSize.contains('1b')) {
+      return quant.contains('q4') ? '~800 MB' : '~4 GB';
+    }
+    return 'Desconocido';
+  }
+
+  /// Detectar si un repositorio es multimodal basado en nombre y tags
+  bool _isMultimodalRepo(String repo, List<String> tags) {
+    final all = (repo + ' ' + tags.join(' ')).toLowerCase();
+    return all.contains('llava') ||
+        all.contains('vision') ||
+        all.contains('multimodal') ||
+        all.contains('vl') ||
+        all.contains('pixtral');
+  }
+
+  /// Verificar si un modelo existe en el registry de Ollama (para validar antes de pull)
+  Future<bool> modelExistsInRegistry(String modelName) async {
+    try {
+      // Si ya tiene tag, verificar directamente
+      if (modelName.contains(':')) {
+        final parts = modelName.split(':');
+        final repo = parts[0];
+        final tag = parts[1];
+
+        final tagsUri = Uri.parse('$_ollamaRegistryApi/v2/$repo/tags/list');
+        final response = await http
+            .get(tagsUri)
+            .timeout(const Duration(seconds: 10));
+
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          final tags = (data['tags'] as List<dynamic>?)?.cast<String>() ?? [];
+          return tags.contains(tag);
+        }
+      } else {
+        // Sin tag, verificar si el repo existe
+        final catalogUri = Uri.parse('$_ollamaRegistryApi/v2/_catalog');
+        final response = await http
+            .get(catalogUri)
+            .timeout(const Duration(seconds: 10));
+
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          final repos = (data['repositories'] as List<dynamic>?)
+              ?.cast<String>() ?? [];
+          return repos.contains(modelName);
+        }
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /// Verificar si Ollama está instalado en el sistema
   Future<bool> isOllamaInstalled() async {
     try {
@@ -607,73 +806,13 @@ class OllamaService extends ChangeNotifier {
   }
 
   /// Detener health check
+  @override
   void dispose() {
     _healthCheckTimer?.cancel();
     super.dispose();
   }
 
-  /// Buscar modelos populares disponibles
-  static List<Map<String, dynamic>> get popularModels => [
-    {
-      'name': 'llama3.2',
-      'description': 'Meta Llama 3.2 - Balance rendimiento/tamaño',
-      'tags': ['3b', '1b'],
-      'size': '~2GB',
-    },
-    {
-      'name': 'llama3.1',
-      'description': 'Meta Llama 3.1 - Modelo principal',
-      'tags': ['8b', '70b', '405b'],
-      'size': '~4.7GB (8b)',
-    },
-    {
-      'name': 'mistral',
-      'description': 'Mistral 7B - Rápido y eficiente',
-      'tags': ['7b'],
-      'size': '~4.1GB',
-    },
-    {
-      'name': 'qwen2.5',
-      'description': 'Qwen 2.5 - Multilingüe excelente',
-      'tags': ['0.5b', '1.5b', '3b', '7b', '14b', '32b', '72b'],
-      'size': '~500MB - 47GB',
-    },
-    {
-      'name': 'phi3',
-      'description': 'Microsoft Phi-3 - Muy rápido',
-      'tags': ['mini', 'small', 'medium'],
-      'size': '~2GB - 8GB',
-    },
-    {
-      'name': 'gemma2',
-      'description': 'Google Gemma 2 - Abierto y eficiente',
-      'tags': ['2b', '9b', '27b'],
-      'size': '~1.6GB - 18GB',
-    },
-    {
-      'name': 'codellama',
-      'description': 'CodeLlama - Especializado en código',
-      'tags': ['7b', '13b', '34b', '70b'],
-      'size': '~3.8GB - 39GB',
-    },
-    {
-      'name': 'llava',
-      'description': 'LLaVA - Multimodal (visión)',
-      'tags': ['7b', '13b', '34b'],
-      'size': '~4.5GB',
-      'multimodal': true,
-    },
-    {
-      'name': 'deepseek-coder',
-      'description': 'DeepSeek Coder - Excelente para código',
-      'tags': ['1.3b', '6.7b', '33b'],
-      'size': '~800MB - 19GB',
-    },
-    {
-      'name': 'neural-chat',
-      'description': 'Neural Chat - Optimizado para conversación',
-      'tags': ['7b'],
-      'size': '~4GB',
-    },
-  ];
+  /// Buscar modelos populares disponibles (método de compatibilidad,
+  /// usa fetchAvailableModels() para obtener datos reales del registry)
+  static List<Map<String, dynamic>> get popularModels => [];
 }

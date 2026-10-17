@@ -1,105 +1,92 @@
 # LightChat
 
-A lightweight chat interface for local LLMs powered by [Ollama](https://ollama.com).
+Aplicación de chat ligero y privado para LLMs locales ejecutados con [Ollama](https://ollama.com). Todo corre en tu máquina: sin nube, sin cuentas, sin credenciales.
 
-## Features
+## Características
 
-- **Easy Setup**: Get started in seconds, not minutes
-- **Local & Private**: All processing happens on your machine
-- **Multimodal Support**: Chat with images (using vision models)
-- **Model Management**: Download and manage models directly from the app
-- **Cross-Platform**: Works on Windows, macOS, and Linux
-- **Streaming Responses**: Real-time chat experience
-- **Minimal Resource Usage**: Optimized for efficiency
+- **Catálogo dinámico de modelos**: Descarga modelos directamente desde el registry de Ollama, siempre actualizado
+- **Local y privado**: Todo el procesamiento ocurre en tu máquina (API de Ollama en `localhost:11434`)
+- **Soporte multimodal**: Chatea con imágenes usando modelos de visión
+- **Gestión de modelos**: Descarga, elimina y controla modelos instalados desde la app
+- **Multiplataforma**: Windows, macOS y Linux
+- **Respuestas en streaming**: Experiencia de chat en tiempo real
+- **Bajo consumo de recursos**: Optimizado para eficiencia
 
-## Requirements
+## Requisitos
 
-- [Ollama](https://ollama.com) installed and running
-- Windows 10/11, macOS 10.15+, or Linux
-- 4GB+ RAM (8GB+ recommended)
+- [Ollama](https://ollama.com) instalado y ejecutándose
+- Windows 10/11, macOS 10.15+, o Linux
+- 4GB+ RAM (8GB+ recomendado)
 
-## Installation
+## Instalación
 
-### 1. Install Ollama
+### 1. Instalar Ollama
 
-Download and install Ollama from [ollama.com](https://ollama.com/download) or use the automatic installer:
+Descarga e instala Ollama desde [ollama.com](https://ollama.com/download) o usa el instalador automático:
 
 ```powershell
 # Windows PowerShell
 .\installer\install_ollama.ps1
 ```
 
-### 2. Download LightChat
+### 2. Descargar LightChat
 
-Download the latest release or build from source:
+Descarga el último release o compila desde el código fuente:
 
 ```bash
-git clone https://github.com/yourusername/lightchat.git
-cd lightchat
+git clone https://github.com/zerumen82/CHAT-IA.git
+cd CHAT-IA/lightchat
 flutter pub get
-flutter build windows  # or macos, linux
+flutter build windows  # o macos, linux
 ```
 
-### 3. Run
+### 3. Ejecutar
 
-Start Ollama:
+Inicia Ollama:
+
 ```bash
 ollama serve
 ```
 
-Then launch LightChat and download your first model from the catalog!
+Luego lanza LightChat y descarga tu primer modelo desde el catálogo.
 
-## Recommended Models
+## Uso
 
-| Model | Size | Best For |
-|-------|------|----------|
-| `llama3.2` | ~2GB | General chat, balanced |
-| `mistral` | ~4GB | Fast, good reasoning |
-| `phi3` | ~2GB | Quick responses |
-| `llava` | ~4.5GB | Image understanding |
-| `codellama` | ~4GB | Programming tasks |
+1. Abre LightChat y ve a **Gestión de Ollama → Catálogo**
+2. Explora los modelos disponibles (obtenidos directamente del registry de Ollama)
+3. Pulsa **Instalar** en el modelo que quieras (ej: `llama3:latest`, `llama3.2:3b`, `mistral:7b`, `phi3:mini`, etc.)
+4. Vuelve a la pantalla de chat y comienza a conversar
 
-## Screenshots
-
-![Chat Interface](screenshots/chat.png)
-![Model Manager](screenshots/models.png)
-
-## Architecture
+## Estructura del proyecto
 
 ```
-LightChat (Flutter)
-    ↓
-Ollama API (HTTP localhost:11434)
-    ↓
-Local LLM Models (GGUF format)
+lightchat/
+├── lib/
+│   ├── main.dart                    # Punto de entrada, temas y ventana
+│   ├── config/
+│   │   └── vllm_config.dart       # Config de Ollama (aunque el archivo diga vllm)
+│   ├── models/
+│   │   ├── chat_message.dart        # Modelos de mensaje
+│   │   └── local_model.dart         # Definiciones de modelo
+│   ├── screens/
+│   │   ├── chat_screen.dart         # Pantalla principal de chat
+│   │   ├── ollama_manager_screen.dart # Gestor de modelos/estado Ollama
+│   │   └── model_manager_screen.dart  # Instalación/descarga de modelos
+│   ├── services/
+│   │   ├── ollama_service.dart          # Cliente API Ollama (singleton)
+│   │   ├── chat_service_ollama.dart     # Lógica del chat con streaming
+│   │   ├── model_catalog_service.dart   # Catálogo online de modelos
+│   │   ├── context_service.dart         # Contexto conversacional
+│   │   └── hardware_detector_service.dart # RAM/VRAM para recomendaciones
+│   └── widgets/
+│       ├── chat_input.dart          # Entrada de mensajes
+│       ├── message_bubble.dart      # Visualización de mensajes
+│       └── ollama_status_widget.dart # Estado de conexión
 ```
 
-## Project Structure
+## Desarrollo
 
-```
-lib/
-├── main.dart                    # App entry point
-├── config/
-│   └── ollama_config.dart       # Configuration
-├── models/
-│   ├── chat_message.dart        # Message models
-│   └── local_model.dart         # Model definitions
-├── screens/
-│   ├── chat_screen.dart         # Main chat UI
-│   └── ollama_manager_screen.dart # Model management
-├── services/
-│   ├── ollama_service.dart      # Ollama API client
-│   ├── chat_service_ollama.dart # Chat logic
-│   └── context_service.dart     # Conversation context
-└── widgets/
-    ├── chat_input.dart          # Message input
-    ├── message_bubble.dart      # Message display
-    └── ollama_status_widget.dart # Connection status
-```
-
-## Development
-
-### Prerequisites
+### Requisitos previos
 
 - Flutter SDK 3.0+
 - Dart SDK 3.0+
@@ -107,35 +94,32 @@ lib/
 ### Build
 
 ```bash
-# Get dependencies
+# Obtener dependencias
 flutter pub get
 
-# Run in debug mode
+# Ejecutar en modo depuración
 flutter run
 
-# Build for release
+# Compilar en release
 flutter build windows  # Windows
 flutter build macos    # macOS
 flutter build linux    # Linux
 ```
 
-## License
+### Empaquetado Windows
 
-MIT License - See [LICENSE](LICENSE) for details
+Usa `build_installer.ps1` + `installer/lightchat_setup.iss` (Inno Setup).
 
-## Acknowledgments
+## Licencia
 
-- [Ollama](https://ollama.com) - Making local LLMs accessible
-- [Flutter](https://flutter.dev) - UI framework
-- All the open-source model creators
+MIT License - Ver [LICENSE](LICENSE) para detalles
 
-## Support
+## Recursos
 
-For issues related to:
-- **LightChat**: Open an issue on GitHub
-- **Ollama**: Visit [ollama.com](https://ollama.com) or [GitHub](https://github.com/ollama/ollama)
-- **Models**: Check [ollama.com/library](https://ollama.com/library)
+- [Ollama](https://ollama.com) - Hacer LLMs locales accesibles
+- [Flutter](https://flutter.dev) - Framework de UI
+- [Ollama Library](https://ollama.com/library) - Catálogo de modelos oficiales
 
 ---
 
-Made with ❤️ for the local AI community
+Hecho con ❤️ para la comunidad de IA local

@@ -1,5 +1,5 @@
 name: lightchat
-description: A lightweight chat interface for vLLM with multimodal support
+description: A lightweight chat interface for local LLMs powered by Ollama
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

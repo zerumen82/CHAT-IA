@@ -27,6 +27,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
       if (!ollamaService.isInitialized) {
         ollamaService.initialize();
       }
+      // Cargar modelos disponibles desde el registry de Ollama
+      ollamaService.fetchAvailableModels();
     });
   }
 
@@ -227,7 +229,6 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
   Widget _buildModelsTab() {
     return Consumer<OllamaService>(
       builder: (context, ollama, _) {
-        final popularModels = OllamaService.popularModels;
         final colorScheme = Theme.of(context).colorScheme;
 
         return Column(
@@ -248,6 +249,14 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                     Icons.search,
                     color: colorScheme.onSurfaceVariant,
                   ),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.refresh),
+                    tooltip: 'Actualizar catálogo desde Ollama',
+                    onPressed: () async {
+                      await ollama.fetchAvailableModels(forceRefresh: true);
+                      if (mounted) setState(() {});
+                    },
+                  ),
                   filled: true,
                   fillColor: colorScheme.surfaceContainerHighest,
                   border: OutlineInputBorder(
@@ -257,37 +266,145 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                 ),
               ),
             ),
-            Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: popularModels.length,
-                itemBuilder: (context, index) {
-                  final model = popularModels[index];
-                  final name = model['name'] as String;
 
-                  if (_searchQuery.isNotEmpty &&
-                      !name.toLowerCase().contains(_searchQuery)) {
-                    return const SizedBox.shrink();
-                  }
+            // Instalar modelo personalizado
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _buildCustomInstallCard(context, ollama),
+            ),
 
-                  final isInstalled =
-                      ollama.models.any((m) => m.name.startsWith(name));
-                  final isPulling =
-                      ollama.isPulling && ollama.pullingModel == name;
+            const SizedBox(height: 8),
 
-                  return _buildModelCard(
-                    model,
-                    isInstalled,
-                    isPulling,
-                    ollama,
-                  );
-                },
+            // Indicador de cuántos modelos hay disponibles
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.cloud_download,
+                    size: 16,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${ollama.availableModels.length} modelos disponibles en el registry de Ollama',
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                      fontSize: 12,
+                    ),
+                  ),
+                  if (ollama.availableModelsLastUpdate != null) ...[
+                    const SizedBox(width: 12),
+                    Text(
+                      'Actualizado ${_formatRelativeTime(ollama.availableModelsLastUpdate!)}',
+                      style: TextStyle(
+                        color: colorScheme.onSurfaceVariant.withValues(
+                          alpha: 0.5,
+                        ),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ],
               ),
+            ),
+
+            const SizedBox(height: 8),
+
+            Expanded(
+              child: ollama.availableModels.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.cloud_off,
+                            size: 64,
+                            color: colorScheme.outline.withValues(alpha: 0.6),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No hay modelos disponibles',
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                              fontSize: 16,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Asegúrate de tener conexión a internet y Ollama ejecutándose',
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant.withValues(
+                                alpha: 0.6,
+                              ),
+                              fontSize: 13,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 16),
+                          FilledButton.icon(
+                            onPressed: () async {
+                              await ollama.fetchAvailableModels(
+                                  forceRefresh: true);
+                              if (mounted) setState(() {});
+                            },
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Reintentar'),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: ollama.availableModels.length,
+                      itemBuilder: (context, index) {
+                        final model = ollama.availableModels[index];
+                        final name = model['name'] as String;
+
+                        final tagsList =
+                            (model['tags'] as List<dynamic>?)
+                                ?.cast<String>() ?? [];
+                        final description =
+                            model['description'] as String? ?? '';
+
+                        final matchesSearch = _searchQuery.isEmpty ||
+                            name.toLowerCase().contains(_searchQuery) ||
+                            description.toLowerCase().contains(_searchQuery) ||
+                            tagsList.any(
+                                (t) => t.toLowerCase().contains(_searchQuery));
+
+                        if (!matchesSearch) {
+                          return const SizedBox.shrink();
+                        }
+
+                        final isInstalled =
+                            ollama.models.any((m) => m.name.startsWith(name));
+                        final isPulling =
+                            ollama.isPulling &&
+                            ollama.pullingModel == name;
+
+                        return _buildModelCard(
+                          model,
+                          isInstalled,
+                          isPulling,
+                          ollama,
+                        );
+                      },
+                    ),
             ),
           ],
         );
       },
     );
+  }
+
+  /// Formatear tiempo relativo (ej: "hace 5 minutos")
+  String _formatRelativeTime(DateTime time) {
+    final diff = DateTime.now().difference(time);
+    if (diff.inMinutes < 1) return 'ahora';
+    if (diff.inHours < 1) return 'hace ${diff.inMinutes} min';
+    if (diff.inDays < 1) return 'hace ${diff.inHours} h';
+    return 'hace ${diff.inDays} días';
   }
 
   Widget _buildModelCard(
@@ -304,152 +421,207 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
         (model['tags'] as List<dynamic>?)?.cast<String>() ?? [];
     final size = model['size'] as String? ?? 'Unknown';
     final isMultimodal = model['multimodal'] == true;
+    final isUncensored = tags.any((t) => t.toLowerCase().contains('uncensored'));
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: isInstalled
               ? Colors.green.withValues(alpha: 0.3)
-              : colorScheme.outline.withValues(alpha: 0.3),
+              : colorScheme.outline.withValues(alpha: 0.2),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          name,
-                          style: TextStyle(
-                            color: colorScheme.onSurface,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: isMultimodal
+                        ? colorScheme.primary.withValues(alpha: 0.15)
+                        : colorScheme.surfaceContainerLowest,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: isMultimodal
+                          ? colorScheme.primary.withValues(alpha: 0.3)
+                          : colorScheme.outline.withValues(alpha: 0.2),
+                    ),
+                  ),
+                  child: Icon(
+                    isMultimodal ? Icons.image : Icons.smart_toy,
+                    size: 24,
+                    color: isMultimodal
+                        ? colorScheme.primary
+                        : colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              name,
+                              style: TextStyle(
+                                color: colorScheme.onSurface,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ),
-                        ),
-                        if (isMultimodal) ...[
-                          const SizedBox(width: 8),
-                          Icon(
-                            Icons.image,
-                            size: 16,
-                            color: colorScheme.primary,
+                          ..._buildModelBadges(
+                            isMultimodal,
+                            isUncensored,
+                            isInstalled,
+                            colorScheme,
                           ),
                         ],
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      description,
-                      style: TextStyle(
-                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                        fontSize: 13,
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              if (isInstalled)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.check, color: Colors.green, size: 14),
-                      const SizedBox(width: 4),
+                      const SizedBox(height: 6),
                       Text(
-                        'INSTALADO',
+                        description,
                         style: TextStyle(
-                          color: Colors.green,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
+                          color: colorScheme.onSurfaceVariant.withValues(
+                            alpha: 0.7,
+                          ),
+                          fontSize: 13,
                         ),
                       ),
                     ],
                   ),
                 ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              ...tags.map((tag) => Chip(
-                    label: Text(
-                      tag,
-                      style: TextStyle(fontSize: 11),
-                    ),
-                    backgroundColor: colorScheme.surfaceContainerHighest,
-                    side: BorderSide.none,
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                  )),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Icon(
-                Icons.storage,
-                size: 14,
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+              ],
+            ),
+            const SizedBox(height: 14),
+            if (tags.isNotEmpty)
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ...tags.map((tag) {
+                    final tagLower = tag.toLowerCase();
+                    Color tagColor;
+                    if (tagLower.contains('uncensored')) {
+                      tagColor = Colors.orange;
+                    } else if (tagLower.contains('vision') ||
+                        tagLower.contains('multimodal') ||
+                        tagLower.contains('llava')) {
+                      tagColor = colorScheme.primary;
+                    } else if (RegExp(r'\d+b').hasMatch(tag)) {
+                      tagColor = colorScheme.secondary;
+                    } else {
+                      tagColor = colorScheme.onSurfaceVariant.withValues(
+                        alpha: 0.5,
+                      );
+                    }
+                    return Chip(
+                      label: Text(
+                        tag,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                          color: tagColor == colorScheme.onSurfaceVariant
+                              ? colorScheme.onSurfaceVariant.withValues(
+                                  alpha: 0.9,
+                                )
+                              : tagColor,
+                        ),
+                      ),
+                      backgroundColor: tagColor.withValues(alpha: 0.1),
+                      side: BorderSide.none,
+                      padding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                    );
+                  }),
+                ],
               ),
-              const SizedBox(width: 4),
-              Text(
-                size,
-                style: TextStyle(
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                  fontSize: 12,
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Icon(
+                  Icons.storage,
+                  size: 14,
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                 ),
-              ),
-              const Spacer(),
-              if (isPulling)
-                SizedBox(
-                  width: 100,
-                  child: LinearProgressIndicator(
-                    value: ollama.pullProgress,
-                    backgroundColor: colorScheme.outline.withValues(alpha: 0.2),
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      colorScheme.primary,
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    size,
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant.withValues(
+                        alpha: 0.7,
+                      ),
+                      fontSize: 12,
                     ),
                   ),
-                )
-              else if (isInstalled)
-                OutlinedButton.icon(
-                  onPressed: () => _confirmDelete(name, ollama),
-                  icon: const Icon(Icons.delete, size: 16),
-                  label: const Text('Eliminar'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: colorScheme.error,
-                  ),
-                )
-              else
-                ElevatedButton.icon(
-                  onPressed: () => _pullModel(name, ollama),
-                  icon: const Icon(Icons.download, size: 16),
-                  label: const Text('Instalar'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: colorScheme.primary,
-                    foregroundColor: colorScheme.onPrimary,
-                  ),
                 ),
-            ],
-          ),
-        ],
+                if (isPulling)
+                  SizedBox(
+                    width: 120,
+                    child: LinearProgressIndicator(
+                      value: ollama.pullProgress,
+                      backgroundColor: colorScheme.outline.withValues(
+                        alpha: 0.2,
+                      ),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        colorScheme.primary,
+                      ),
+                      minHeight: 4,
+                    ),
+                  )
+                else if (isInstalled)
+                  OutlinedButton.icon(
+                    onPressed: () => _confirmDelete(name, ollama),
+                    icon: const Icon(Icons.delete_outline, size: 16),
+                    label: const Text('Eliminar'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: colorScheme.error,
+                      side: BorderSide(
+                        color: colorScheme.error.withValues(alpha: 0.5),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  )
+                else
+                  FilledButton.icon(
+                    onPressed: () => _pullModel(name, ollama),
+                    icon: const Icon(Icons.download_rounded, size: 16),
+                    label: const Text('Instalar'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: colorScheme.primary,
+                      foregroundColor: colorScheme.onPrimary,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -501,69 +673,159 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
   Widget _buildInstalledModelCard(OllamaModel model, OllamaService ollama) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final isMultimodal = model.name.toLowerCase().contains('llava') ||
+        model.name.toLowerCase().contains('vision');
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: Colors.green.withValues(alpha: 0.3),
         ),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: Colors.green.withValues(alpha: 0.2),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(
-              Icons.check_circle,
-              color: Colors.green,
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  model.name,
-                  style: TextStyle(
-                    color: colorScheme.onSurface,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Tamaño: ${model.sizeFormatted}',
-                  style: TextStyle(
-                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                    fontSize: 13,
-                  ),
-                ),
-                if (model.modifiedAt != null)
-                  Text(
-                    'Actualizado: ${_formatDate(model.modifiedAt!)}',
-                    style: TextStyle(
-                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                      fontSize: 11,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          IconButton(
-            onPressed: () => _confirmDelete(model.name, ollama),
-            icon: const Icon(Icons.delete_outline, color: Colors.red),
-            tooltip: 'Eliminar',
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: Colors.green.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: Colors.green.withValues(alpha: 0.3),
+                ),
+              ),
+              child: Icon(
+                isMultimodal ? Icons.image : Icons.check_circle,
+                color: Colors.green,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          model.name,
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      if (isMultimodal) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: colorScheme.primary.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.image,
+                                size: 12,
+                                color: colorScheme.primary,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'Visión',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  color: colorScheme.primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.storage,
+                        size: 14,
+                        color: colorScheme.onSurfaceVariant.withValues(
+                          alpha: 0.6,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Tamaño: ${model.sizeFormatted}',
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant.withValues(
+                            alpha: 0.7,
+                          ),
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (model.modifiedAt != null) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.schedule,
+                          size: 14,
+                          color: colorScheme.onSurfaceVariant.withValues(
+                            alpha: 0.6,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Actualizado: ${_formatDate(model.modifiedAt!)}',
+                          style: TextStyle(
+                            color: colorScheme.onSurfaceVariant.withValues(
+                              alpha: 0.6,
+                            ),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => _confirmDelete(model.name, ollama),
+              icon: const Icon(Icons.delete_outline, size: 16),
+              label: const Text('Eliminar'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: colorScheme.error,
+                side: BorderSide(
+                  color: colorScheme.error.withValues(alpha: 0.5),
+                ),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -837,6 +1099,191 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
         );
       }
     }
+  }
+
+  /// Construye los badges de estado del modelo (visión, sin censura, instalado/disponible)
+  List<Widget> _buildModelBadges(
+    bool isMultimodal,
+    bool isUncensored,
+    bool isInstalled,
+    ColorScheme colorScheme,
+  ) {
+    final badges = <Widget>[];
+
+    if (isMultimodal) {
+      badges.add(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: colorScheme.primary.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.image,
+                size: 12,
+                color: colorScheme.primary,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'Visión',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: colorScheme.primary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (isUncensored) {
+      badges.add(
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.orange.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.lock_open,
+                size: 12,
+                color: Colors.orange,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'Sin censura',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.orange,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    badges.add(
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isInstalled
+              ? Colors.green.withValues(alpha: 0.15)
+              : Colors.orange.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isInstalled ? Icons.check_circle : Icons.cloud_download,
+              size: 12,
+              color: isInstalled ? Colors.green : Colors.orange,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              isInstalled ? 'Instalado' : 'Disponible',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: isInstalled ? Colors.green : Colors.orange,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return badges;
+  }
+
+  /// Campo para instalar un modelo personalizado (ej: dolphin3:8b)
+  Widget _buildCustomInstallCard(
+      BuildContext context, OllamaService ollama) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final controller = TextEditingController();
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: colorScheme.outline.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.add_circle_outline,
+                color: colorScheme.primary,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Instalar modelo personalizado',
+                style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: controller,
+            style: TextStyle(color: colorScheme.onSurface),
+            decoration: InputDecoration(
+              hintText: 'Ej: dolphin3:8b, nous-hermes2:7b, wizardlm2:7b...',
+              hintStyle: TextStyle(
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+              ),
+              prefixIcon: Icon(
+                Icons.model_training,
+                color: colorScheme.onSurfaceVariant,
+              ),
+              filled: true,
+              fillColor: colorScheme.surfaceContainerHighest,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide.none,
+              ),
+            ),
+            onSubmitted: (value) async {
+              final name = value.trim();
+              if (name.isEmpty) return;
+              await _pullModel(name, ollama);
+              controller.clear();
+            },
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Text(
+                'Escribe el nombre completo del modelo (con tag, ej: :8b) y presiona Enter',
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   String _getStatusText(OllamaStatus status) {
