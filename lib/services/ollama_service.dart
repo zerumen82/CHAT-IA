@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:html/parser.dart' as html_parser;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -166,7 +168,12 @@ class OllamaService extends ChangeNotifier {
 
   static const String _defaultHost = 'localhost';
   static const int _defaultPort = 11434;
-  static const String _apiVersion = 'v1';
+  static const String _ollamaModelsApi = 'https://ollama.com/search';
+  static const int _catalogPageSize = 20;
+  static const int _catalogMaxPages = 50;
+
+  final http.Client _catalogClient;
+  final Uri _catalogUri;
 
   OllamaServerInfo _serverInfo = const OllamaServerInfo(
     status: OllamaStatus.notInstalled,
@@ -201,9 +208,22 @@ class OllamaService extends ChangeNotifier {
 
   // Logs
   final List<String> _logs = [];
-  List<String> get logs => List.unmodifiable(_logs);
+  late final List<String> _logsView = UnmodifiableListView(_logs);
+  List<String> get logs => _logsView;
 
-  OllamaService._();
+  // Proceso que arrancó LightChat (null si el servidor ya estaba corriendo).
+  Process? _serverProcess;
+
+  OllamaService._()
+      : _catalogClient = http.Client(),
+        _catalogUri = Uri.parse(_ollamaModelsApi);
+
+  @visibleForTesting
+  OllamaService.forTesting({
+    required http.Client catalogClient,
+    required Uri catalogUri,
+  })  : _catalogClient = catalogClient,
+        _catalogUri = catalogUri;
 
   static OllamaService get instance {
     _instance ??= OllamaService._();
@@ -226,6 +246,9 @@ class OllamaService extends ChangeNotifier {
 
       // Verificar si Ollama está instalado y corriendo
       await checkInstallation();
+
+      // Sondeo único: también reintenta si Ollama aún no estaba corriendo.
+      _startHealthCheck();
 
       _isInitialized = true;
       _addLog('OllamaService inicializado');
@@ -295,27 +318,70 @@ class OllamaService extends ChangeNotifier {
         _addLog('Ollama detectado en $baseUrl');
         _addLog('${_models.length} modelos disponibles');
       } else {
-        _serverInfo = const OllamaServerInfo(
-          status: OllamaStatus.notInstalled,
-        );
+        _models = [];
+        _serverInfo = _parseHttpError(response.statusCode, baseUrl);
       }
     } on SocketException {
+      _models = [];
       _serverInfo = OllamaServerInfo(
         status: OllamaStatus.notInstalled,
         errorMessage: 'Ollama no está corriendo en $baseUrl',
       );
     } on TimeoutException {
+      _models = [];
       _serverInfo = const OllamaServerInfo(
         status: OllamaStatus.notInstalled,
         errorMessage: 'Timeout conectando a Ollama',
       );
     } catch (e) {
+      _models = [];
       _serverInfo = OllamaServerInfo(
         status: OllamaStatus.error,
         errorMessage: 'Error: $e',
       );
     }
     notifyListeners();
+  }
+
+  /// Parsear código de estado HTTP a información de servidor
+  OllamaServerInfo _parseHttpError(int statusCode, String baseUrl) {
+    switch (statusCode) {
+      case 401:
+        return OllamaServerInfo(
+          status: OllamaStatus.error,
+          errorMessage: 'No autorizado: verifica autenticación en $baseUrl',
+        );
+      case 403:
+        return OllamaServerInfo(
+          status: OllamaStatus.error,
+          errorMessage: 'Acceso denegado a $baseUrl',
+        );
+      case 404:
+        return const OllamaServerInfo(
+          status: OllamaStatus.notInstalled,
+          errorMessage: 'API de Ollama no encontrada (¿versión incompatible?)',
+        );
+      case 500:
+        return OllamaServerInfo(
+          status: OllamaStatus.error,
+          errorMessage: 'Error interno del servidor Ollama',
+        );
+      case 502:
+        return OllamaServerInfo(
+          status: OllamaStatus.notInstalled,
+          errorMessage: 'Bad gateway: Ollama no responde correctamente',
+        );
+      case 503:
+        return OllamaServerInfo(
+          status: OllamaStatus.notInstalled,
+          errorMessage: 'Servicio no disponible: Ollama no está corriendo',
+        );
+      default:
+        return OllamaServerInfo(
+          status: OllamaStatus.error,
+          errorMessage: 'Error HTTP $statusCode conectando a $baseUrl',
+        );
+    }
   }
 
   /// Obtener versión de Ollama
@@ -344,19 +410,41 @@ class OllamaService extends ChangeNotifier {
 
   /// Health check
   Future<void> _doHealthCheck() async {
+    // Si el servidor no está disponible, reintentar la conexión completa.
+    if (_serverInfo.status != OllamaStatus.running) {
+      await checkInstallation();
+      return;
+    }
+
     try {
       final response = await http
           .get(Uri.parse('$baseUrl/api/tags'))
           .timeout(const Duration(seconds: 5));
 
-      if (response.statusCode == 200 && _serverInfo.status != OllamaStatus.running) {
+      if (response.statusCode == 200 &&
+          _serverInfo.status != OllamaStatus.running) {
         await checkInstallation();
-      } else if (response.statusCode != 200 && _serverInfo.status == OllamaStatus.running) {
+      } else if (response.statusCode == 200) {
+        final data = json.decode(response.body) as Map<String, dynamic>;
+        final modelsList = data['models'] as List<dynamic>? ?? [];
+        final models = modelsList
+            .map((model) => OllamaModel.fromJson(model as Map<String, dynamic>))
+            .toList();
+        if (!listEquals(
+          models.map((model) => model.name).toList(),
+          _models.map((model) => model.name).toList(),
+        )) {
+          _models = models;
+          notifyListeners();
+        }
+      } else if (_serverInfo.status == OllamaStatus.running) {
+        _models = [];
         _serverInfo = _serverInfo.copyWith(status: OllamaStatus.error);
         notifyListeners();
       }
     } catch (e) {
       if (_serverInfo.status == OllamaStatus.running) {
+        _models = [];
         _serverInfo = _serverInfo.copyWith(status: OllamaStatus.error);
         notifyListeners();
       }
@@ -456,6 +544,8 @@ class OllamaService extends ChangeNotifier {
     required List<OllamaMessage> messages,
     double? temperature,
     int? numPredict,
+    int? numCtx,
+    bool? think,
   }) async* {
     try {
       final request = http.Request('POST', Uri.parse('$baseUrl/api/chat'));
@@ -464,26 +554,25 @@ class OllamaService extends ChangeNotifier {
         'model': model,
         'messages': messages.map((m) => m.toJson()).toList(),
         'stream': true,
+        if (think != null) 'think': think,
         'options': {
           if (temperature != null) 'temperature': temperature,
           if (numPredict != null) 'num_predict': numPredict,
+          if (numCtx != null) 'num_ctx': numCtx,
         },
       });
 
       final response = await request.send();
 
       if (response.statusCode == 200) {
-        await for (final chunk in response.stream.transform(utf8.decoder)) {
-          final lines = chunk.split('\n');
-          for (final line in lines) {
-            if (line.trim().isEmpty) continue;
-            try {
-              final data = json.decode(line);
-              yield OllamaChatResponse.fromJson(data);
-            } catch (_) {
-              // Ignorar líneas inválidas
-            }
+        await for (final line in response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())) {
+          if (line.trim().isEmpty) {
+            continue;
           }
+          final data = json.decode(line) as Map<String, dynamic>;
+          yield OllamaChatResponse.fromJson(data);
         }
       } else {
         throw Exception('HTTP ${response.statusCode}');
@@ -561,97 +650,241 @@ class OllamaService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// URL de la API comunitaria de Ollama (ollamadb.dev) con el catálogo completo
-  /// de modelos disponibles (4370+ modelos con tamaño, pulls, tags, etc.)
-  static const String _ollamaModelsApi = 'https://ollamadb.dev/api/v1/models';
+  /// Limpiar logs
+  void clearLogs() {
+    _logs.clear();
+    _addLog('Registros limpiados por el usuario');
+  }
 
-  /// Modelos disponibles para descargar (obtenidos de ollamadb.dev)
+  /// Modelos publicados en el catálogo oficial de Ollama.
   List<Map<String, dynamic>> _availableModels = [];
   List<Map<String, dynamic>> get availableModels => _availableModels;
+  bool _isLoadingAvailableModels = false;
+  bool get isLoadingAvailableModels => _isLoadingAvailableModels;
+  String? _availableModelsError;
+  String? get availableModelsError => _availableModelsError;
 
   /// Timestamp de última actualización del catálogo remoto
   DateTime? _availableModelsLastUpdate;
   DateTime? get availableModelsLastUpdate => _availableModelsLastUpdate;
 
-  /// Descargar lista de modelos disponibles desde ollamadb.dev
-  /// Devuelve la lista completa de modelos disponibles para `ollama pull`
+  /// Cargar el catálogo local de Ollama, sin perder datos si falla la red.
   Future<List<Map<String, dynamic>>> fetchAvailableModels({
     bool forceRefresh = false,
   }) async {
-    // Si ya tenemos caché reciente (menos de 1 hora) y no se fuerza refresh
     if (!forceRefresh &&
         _availableModels.isNotEmpty &&
         _availableModelsLastUpdate != null &&
         DateTime.now().difference(_availableModelsLastUpdate!).inHours < 1) {
       return _availableModels;
     }
-
-    _availableModels = [];
-    _addLog('Consultando catálogo de modelos en ollamadb.dev...');
-
-    try {
-      final uri = Uri.parse(
-          '$_ollamaModelsApi?limit=200&sort_by=pulls&order=desc');
-      final response = await http
-          .get(uri)
-          .timeout(const Duration(seconds: 20));
-
-      if (response.statusCode != 200) {
-        _addLog(
-            'Error consultando modelos: HTTP ${response.statusCode}. '
-            'Usa "Instalar modelo personalizado" para descargar modelos.');
-        _availableModelsLastUpdate = DateTime.now();
-        return _availableModels;
-      }
-
-      final data = json.decode(response.body);
-      final modelsList = (data['models'] as List<dynamic>? ?? []);
-
-      final results = <Map<String, dynamic>>[];
-      for (final model in modelsList) {
-        final modelId = model['model_identifier'] as String? ??
-            model['model_name'] as String? ??
-            model['id'] as String? ??
-            '';
-        if (modelId.isEmpty) continue;
-
-        // Separar nombre y tag (ej: "llama3.2:3b" -> repo: "llama3.2", tag: "3b")
-        final parts = modelId.split(':');
-        final repo = parts[0];
-        final tag = parts.length > 1 ? parts[1] : 'latest';
-
-        // Obtener tamaño desde las etiquetas (ej: "8B", "70B", "405B")
-        final labels = (model['labels'] as List<dynamic>?)
-            ?.cast<String>() ?? [];
-        final size = _estimateSizeFromLabels(labels);
-
-        results.add({
-          'name': modelId,
-          'repository': repo,
-          'tags': [...labels, tag]..toSet().toList(),
-          'description': model['description'] as String? ??
-              _getModelDescription(repo),
-          'size': size,
-          'pulls': model['pulls'] as int? ?? 0,
-          'multimodal': _isMultimodalRepo(repo, modelId),
-        });
-      }
-
-      _availableModels = results;
-      _availableModelsLastUpdate = DateTime.now();
-      _addLog('${_availableModels.length} modelos disponibles en ollamadb.dev');
-      return _availableModels;
-    } catch (e) {
-      _addLog('Error consultando modelos de ollamadb.dev: $e');
-      _availableModelsLastUpdate = DateTime.now();
+    if (_isLoadingAvailableModels && !forceRefresh) {
       return _availableModels;
     }
+
+    _isLoadingAvailableModels = true;
+    _availableModelsError = null;
+    _addLog('Consultando el catálogo de modelos de Ollama...');
+
+    try {
+      final firstPage = await _fetchCatalogPage(1);
+      final pageCount = _parseCatalogPageCount(firstPage.body);
+      final results = parseAvailableModels(firstPage.body);
+      if (pageCount == null && results.length >= _catalogPageSize) {
+        throw const FormatException(
+          'No se pudo determinar cuántas páginas tiene el catálogo de Ollama.',
+        );
+      }
+      final lastPage = pageCount ?? 1;
+
+      for (var firstPageNumber = 2;
+          firstPageNumber <= lastPage;
+          firstPageNumber += 4) {
+        final requests = <Future<http.Response>>[];
+        for (var page = firstPageNumber;
+            page <= lastPage && page < firstPageNumber + 4;
+            page++) {
+          requests.add(_fetchCatalogPage(page));
+        }
+        for (final response in await Future.wait(requests)) {
+          results.addAll(parseAvailableModels(response.body));
+        }
+      }
+
+      if (results.isEmpty) {
+        throw const FormatException(
+          'La búsqueda de Ollama no contiene modelos locales.',
+        );
+      }
+
+      _availableModels = {
+        for (final model in results) model['name'] as String: model,
+      }.values.toList();
+      _availableModelsLastUpdate = DateTime.now();
+      _addLog('${_availableModels.length} modelos cargados desde Ollama.');
+    } catch (e) {
+      _availableModelsError =
+          'No se pudo cargar el catálogo oficial de Ollama: $e';
+      _addLog(_availableModelsError!);
+    } finally {
+      _isLoadingAvailableModels = false;
+      notifyListeners();
+    }
+
+    return _availableModels;
+  }
+
+  Future<http.Response> _fetchCatalogPage(int page) async {
+    final headers = <String, String>{'Accept': 'text/html'};
+    if (page > 1) {
+      headers['HX-Request'] = 'true';
+      headers['HX-Target'] = 'searchresults';
+    }
+    final response = await _catalogClient
+        .get(
+          _catalogUri.replace(queryParameters: {
+            'page': '$page',
+            'c': 'local',
+          }),
+          headers: headers,
+        )
+        .timeout(const Duration(seconds: 20));
+
+    if (response.statusCode != 200) {
+      throw HttpException(
+        'HTTP ${response.statusCode} al consultar el catálogo de Ollama.',
+        uri: _catalogUri,
+      );
+    }
+    return response;
+  }
+
+  static int? _parseCatalogPageCount(String body) {
+    final document = html_parser.parse(body);
+    final placeholder =
+        document.querySelector('#form-input')?.attributes['placeholder'];
+    final modelCount = int.tryParse(
+      RegExp(r'\d+').firstMatch(placeholder ?? '')?.group(0) ?? '',
+    );
+    if (modelCount == null) {
+      return null;
+    }
+    final pageCount = (modelCount / _catalogPageSize).ceil();
+    if (pageCount > _catalogMaxPages) {
+      throw const FormatException(
+        'El catálogo de Ollama supera el límite de páginas admitido.',
+      );
+    }
+    return pageCount.clamp(1, _catalogMaxPages).toInt();
+  }
+
+  @visibleForTesting
+  static List<Map<String, dynamic>> parseAvailableModels(String body) {
+    final document = html_parser.parse(body);
+    final results = <Map<String, dynamic>>[];
+    for (final card in document.querySelectorAll('a[href^="/library/"]')) {
+      final modelId = card.querySelector('h2')?.text.trim() ?? '';
+      if (modelId.isEmpty) {
+        continue;
+      }
+
+      final description = card.querySelector('p')?.text.trim() ?? '';
+      final labels = card
+          .querySelectorAll('div.mt-3 span')
+          .map((element) => element.text.trim())
+          .where((label) => label.isNotEmpty)
+          .toSet()
+          .toList();
+      final lowerName = modelId.toLowerCase();
+      final lowerDescription = description.toLowerCase();
+      final isUncensored = lowerName.contains('uncensored') ||
+          lowerDescription.contains('uncensored') ||
+          lowerName.contains('dolphin');
+      final isMultimodal = labels.any((label) {
+            final lowerLabel = label.toLowerCase();
+            return lowerLabel.contains('vision') ||
+                lowerLabel.contains('multimodal');
+          }) ||
+          lowerDescription.contains('vision') ||
+          lowerDescription.contains('multimodal') ||
+          lowerName.contains('vision') ||
+          lowerName.contains('llava') ||
+          lowerName.contains('pixtral') ||
+          lowerName.contains('vl');
+      final downloadTitle =
+          card.querySelector('[title*="downloads"]')?.attributes['title'];
+      final pulls = int.tryParse(
+        (downloadTitle ?? '').replaceAll(RegExp(r'[^0-9]'), ''),
+      );
+
+      results.add({
+        'name': modelId,
+        'repository': modelId,
+        'tags': labels,
+        'description': description,
+        'size': _estimateSizeFromLabels(labels),
+        'pulls': pulls ?? 0,
+        'multimodal': isMultimodal,
+        'uncensored': isUncensored,
+      });
+    }
+
+    return results;
+  }
+
+  static List<Map<String, dynamic>> filterAvailableModels({
+    required List<Map<String, dynamic>> models,
+    String query = '',
+    bool uncensoredOnly = false,
+    bool multimodalOnly = false,
+    bool smallOnly = false,
+  }) {
+    final normalizedQuery = query.trim().toLowerCase();
+    return models.where((model) {
+      final name = (model['name'] as String? ?? '').toLowerCase();
+      final description = (model['description'] as String? ?? '').toLowerCase();
+      final tags =
+          (model['tags'] as List<dynamic>? ?? []).whereType<String>().toList();
+      if (normalizedQuery.isNotEmpty &&
+          !name.contains(normalizedQuery) &&
+          !description.contains(normalizedQuery) &&
+          !tags.any((tag) => tag.toLowerCase().contains(normalizedQuery))) {
+        return false;
+      }
+      if (uncensoredOnly && model['uncensored'] != true) {
+        return false;
+      }
+      if (multimodalOnly && model['multimodal'] != true) {
+        return false;
+      }
+      if (smallOnly &&
+          !tags.any((tag) {
+            final match = RegExp(r'(\d+(?:\.\d+)?)b', caseSensitive: false)
+                .firstMatch(tag);
+            final size = double.tryParse(match?.group(1) ?? '');
+            return size != null && size <= 8;
+          })) {
+        return false;
+      }
+      return true;
+    }).toList();
   }
 
   /// Estimar tamaño basado en las etiquetas del modelo (ej: "8B", "70B")
-  String _estimateSizeFromLabels(List<String> labels) {
+  static String _estimateSizeFromLabels(List<String> labels) {
     for (final label in labels) {
       final lower = label.toLowerCase();
+      final sizeMatch = RegExp(r'(\d+(?:\.\d+)?)b').firstMatch(lower);
+      final parameterSize = double.tryParse(sizeMatch?.group(1) ?? '');
+      if (parameterSize != null) {
+        if (parameterSize <= 1) return '~800 MB';
+        if (parameterSize <= 3) return '~2 GB';
+        if (parameterSize <= 8) return '~5 GB';
+        if (parameterSize <= 14) return '~8 GB';
+        if (parameterSize <= 35) return '~20 GB';
+        if (parameterSize <= 70) return '~40 GB';
+        return '~230 GB';
+      }
       if (lower.contains('405b')) return '~230 GB';
       if (lower.contains('70b')) return '~40 GB';
       if (lower.contains('34b') || lower.contains('35b')) return '~20 GB';
@@ -664,38 +897,6 @@ class OllamaService extends ChangeNotifier {
       if (lower.contains('1b') || lower.contains('0.5b')) return '~800 MB';
     }
     return 'Desconocido';
-  }
-
-  /// Obtener descripción legible basada en el nombre del repositorio
-  String _getModelDescription(String repo) {
-    final lower = repo.toLowerCase();
-    if (lower.contains('llama3')) return 'Meta Llama 3 - Modelo generalista';
-    if (lower.contains('llama3.2')) return 'Meta Llama 3.2 - Balance rendimiento/tamaño';
-    if (lower.contains('llama3.1')) return 'Meta Llama 3.1 - Modelo principal';
-    if (lower.contains('mistral')) return 'Mistral AI - Rápido y eficiente';
-    if (lower.contains('qwen')) return 'Qwen - Multilingüe excelente';
-    if (lower.contains('phi')) return 'Microsoft Phi - Muy rápido';
-    if (lower.contains('gemma')) return 'Google Gemma - Abierto y eficiente';
-    if (lower.contains('code')) return 'Modelo especializado en código';
-    if (lower.contains('llava')) return 'LLaVA - Multimodal (visión + texto)';
-    if (lower.contains('dolphin') ||
-        lower.contains('nous-hermes') ||
-        lower.contains('wizardlm') ||
-        lower.contains('openhermes')) {
-      return 'Modelo sin restricciones (uncensored)';
-    }
-    if (lower.contains('tinyllama')) return 'Modelo muy ligero para CPU';
-    return 'Modelo disponible en Ollama';
-  }
-
-  /// Detectar si un modelo es multimodal basado en el nombre
-  bool _isMultimodalRepo(String repo, String modelId) {
-    final all = (repo + ' ' + modelId).toLowerCase();
-    return all.contains('llava') ||
-        all.contains('vision') ||
-        all.contains('multimodal') ||
-        all.contains('vl') ||
-        all.contains('pixtral');
   }
 
   /// Verificar si Ollama está instalado en el sistema
@@ -719,12 +920,15 @@ class OllamaService extends ChangeNotifier {
       _serverInfo = _serverInfo.copyWith(status: OllamaStatus.starting);
       notifyListeners();
 
-      Process? process;
-      if (Platform.isWindows) {
-        process = await Process.start('ollama', ['serve']);
-      } else {
-        process = await Process.start('ollama', ['serve']);
-      }
+      final process = await Process.start('ollama', ['serve']);
+      _serverProcess = process;
+      unawaited(process.stdout.drain<void>());
+      unawaited(process.stderr.drain<void>());
+      unawaited(process.exitCode.then((_) {
+        if (identical(_serverProcess, process)) {
+          _serverProcess = null;
+        }
+      }));
 
       // Esperar a que inicie
       await Future.delayed(const Duration(seconds: 3));
@@ -744,10 +948,84 @@ class OllamaService extends ChangeNotifier {
     }
   }
 
+  /// Descarga de la memoria los modelos cargados sin cerrar Ollama.
+  ///
+  /// Es la forma segura de liberar VRAM al cerrar LightChat: Ollama sigue
+  /// disponible para otras aplicaciones y el modelo se recarga al pedirlo.
+  Future<int> unloadLoadedModels() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$baseUrl/api/ps'))
+          .timeout(const Duration(milliseconds: 1200));
+      if (response.statusCode != 200) {
+        return 0;
+      }
+
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      final loaded = (data['models'] as List<dynamic>? ?? [])
+          .whereType<Map<String, dynamic>>()
+          .map((model) =>
+              model['name']?.toString() ?? model['model']?.toString())
+          .whereType<String>()
+          .where((name) => name.isNotEmpty)
+          .toList();
+      if (loaded.isEmpty) {
+        return 0;
+      }
+
+      await Future.wait(
+        loaded.map(
+          (name) => http
+              .post(
+                Uri.parse('$baseUrl/api/generate'),
+                headers: {'Content-Type': 'application/json'},
+                body: json.encode({'model': name, 'keep_alive': 0}),
+              )
+              .timeout(const Duration(milliseconds: 1200))
+              .catchError((_) => http.Response('', 0)),
+        ),
+      );
+      _addLog('${loaded.length} modelo(s) descargados de memoria');
+      return loaded.length;
+    } catch (e) {
+      debugPrint('No se pudieron descargar los modelos: $e');
+      return 0;
+    }
+  }
+
+  /// Detener el servidor Ollama **solo si lo inició LightChat**.
+  ///
+  /// Antes se ejecutaba `taskkill /F /IM ollama.exe`, que cerraba también el
+  /// Ollama que el usuario tuviera abierto para otras aplicaciones.
+  Future<void> stopServer() async {
+    final process = _serverProcess;
+    if (process == null) {
+      _addLog('Ollama no lo inició LightChat; se deja en marcha');
+      await unloadLoadedModels();
+      return;
+    }
+
+    try {
+      _addLog('Deteniendo el servidor Ollama iniciado por LightChat...');
+      if (Platform.isWindows) {
+        await Process.run('taskkill', ['/F', '/PID', '${process.pid}']);
+      } else {
+        process.kill();
+      }
+      _serverProcess = null;
+      await Future.delayed(const Duration(seconds: 1));
+      await checkInstallation();
+      _addLog('Servidor Ollama detenido, VRAM liberada');
+    } catch (e) {
+      _addLog('Error deteniendo servidor: $e');
+    }
+  }
+
   /// Detener health check
   @override
   void dispose() {
     _healthCheckTimer?.cancel();
+    _catalogClient.close();
     super.dispose();
   }
 

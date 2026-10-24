@@ -1,16 +1,21 @@
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
+
+import 'package:lightchat/models/document_attachment.dart';
+import 'package:lightchat/screens/ollama_manager_screen.dart';
 import 'package:lightchat/services/chat_service_ollama.dart';
 import 'package:lightchat/services/ollama_service.dart';
-import 'package:lightchat/models/message.dart';
-import 'package:lightchat/widgets/model_selector.dart';
-import 'package:lightchat/widgets/message_bubble.dart';
 import 'package:lightchat/widgets/capsule_icon.dart';
 import 'package:lightchat/widgets/chat_input.dart';
+import 'package:lightchat/widgets/message_bubble.dart';
+import 'package:lightchat/widgets/model_selector.dart';
 import 'package:lightchat/widgets/ollama_status_widget.dart';
-import 'package:lightchat/screens/ollama_manager_screen.dart';
 
 /// Pantalla principal de chat con diseño estilo mensajería
 class ChatScreen extends StatefulWidget {
@@ -23,110 +28,217 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final ScrollController _consoleScrollController = ScrollController();
+  final GlobalKey<ChatInputState> _chatInputKey = GlobalKey<ChatInputState>();
   bool _showConsole = false;
+  bool _isDraggingFiles = false;
+  bool _autoScroll = true;
+  bool _scrollScheduled = false;
+  int _lastLogCount = 0;
 
   @override
   void initState() {
     super.initState();
-    _consoleScrollController.addListener(() {
-      if (_consoleScrollController.position.pixels ==
-          _consoleScrollController.position.maxScrollExtent) {
-        return;
-      }
-    });
+    _scrollController.addListener(_onScroll);
   }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     _consoleScrollController.dispose();
     super.dispose();
   }
 
-  void _scrollToBottom() {
-    if (_scrollController.hasClients) {
-      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-    }
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    _autoScroll = position.maxScrollExtent - position.pixels < 120;
   }
 
-  Future<void> _handleSendMessage(String text, List<XFile>? images) async {
+  /// Baja al final solo si el usuario ya estaba abajo, para no interrumpir
+  /// la lectura mientras llega la respuesta en streaming.
+  void _scheduleAutoScroll() {
+    if (_scrollScheduled) return;
+    _scrollScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollScheduled = false;
+      if (!mounted || !_scrollController.hasClients || !_autoScroll) return;
+      final position = _scrollController.position;
+      if (position.maxScrollExtent - position.pixels <= 0.5) return;
+      _scrollController.jumpTo(position.maxScrollExtent);
+    });
+  }
+
+  void _handleSendMessage(
+    String text,
+    List<XFile>? images,
+    List<DocumentAttachment>? documents,
+  ) {
     final chatService = context.read<ChatServiceOllama>();
 
     List<String>? imagePaths;
     if (images != null && images.isNotEmpty) {
       imagePaths = images.map((img) => img.path).toList();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Procesando ${images.length} imagen(es)...'),
-          duration: const Duration(seconds: 1),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
     }
 
-    if (text.isNotEmpty) {
-      await chatService.sendMessage(text, imagePaths: imagePaths);
-      _scrollToBottom();
+    if (text.isNotEmpty ||
+        (imagePaths?.isNotEmpty ?? false) ||
+        (documents?.isNotEmpty ?? false)) {
+      _autoScroll = true;
+      _scheduleAutoScroll();
+      unawaited(chatService.sendMessage(
+        text,
+        imagePaths: imagePaths,
+        documents: documents,
+      ));
     }
   }
 
-  void _retryMessage(Message message) {
-    final chatService = context.read<ChatServiceOllama>();
-    if (message.text.isNotEmpty) {
-      chatService.sendMessage(message.text);
-    }
+  void _retryMessage() {
+    context.read<ChatServiceOllama>().retryLastMessage();
+  }
+
+  void _stopGeneration() {
+    context.read<ChatServiceOllama>().stopGeneration();
   }
 
   @override
   Widget build(BuildContext context) {
-    final chatService = context.watch<ChatServiceOllama>();
     final colorScheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      appBar: _buildAppBar(context, chatService),
-      body: Stack(
-        children: [
-          Column(
-            children: [
-              Consumer<OllamaService>(
-                builder: (context, ollama, _) {
-                  if (chatService.availableModels.isEmpty &&
-                      ollama.serverInfo.status != OllamaStatus.running) {
-                    return const OllamaQuickConnect();
-                  }
-                  return const SizedBox.shrink();
-                },
-              ),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(kToolbarHeight),
+        child: Consumer<ChatServiceOllama>(
+          builder: (context, chatService, _) =>
+              _buildAppBar(context, chatService),
+        ),
+      ),
+      body: DropTarget(
+        enable: ModalRoute.of(context)?.isCurrent ?? true,
+        onDragEntered: (_) {
+          setState(() => _isDraggingFiles = true);
+        },
+        onDragExited: (_) {
+          setState(() => _isDraggingFiles = false);
+        },
+        onDragDone: (details) {
+          setState(() => _isDraggingFiles = false);
+          _chatInputKey.currentState?.addFiles(details.files);
+        },
+        child: Stack(
+          children: [
+            Column(
+              children: [
+                Selector<ChatServiceOllama, bool>(
+                  selector: (_, chatService) =>
+                      chatService.availableModels.isEmpty,
+                  builder: (context, noModels, _) {
+                    if (!noModels) return const SizedBox.shrink();
+                    return Selector<OllamaService, bool>(
+                      selector: (_, ollama) =>
+                          ollama.serverInfo.status != OllamaStatus.running,
+                      builder: (context, offline, _) => offline
+                          ? const OllamaQuickConnect()
+                          : const SizedBox.shrink(),
+                    );
+                  },
+                ),
+                Expanded(
+                  child: Selector<ChatServiceOllama, int>(
+                    selector: (_, chatService) => chatService.messagesVersion,
+                    builder: (context, _, __) =>
+                        _buildMessageList(context.read<ChatServiceOllama>()),
+                  ),
+                ),
+                Selector<ChatServiceOllama, bool>(
+                  selector: (_, chatService) => chatService.isLoading,
+                  builder: (context, isLoading, _) => isLoading
+                      ? _buildTypingIndicator(context)
+                      : const SizedBox.shrink(),
+                ),
+                Selector<ChatServiceOllama, ({bool loading, bool connected})>(
+                  selector: (_, chatService) => (
+                    loading: chatService.isLoading,
+                    connected: chatService.availableModels.isNotEmpty,
+                  ),
+                  builder: (context, state, _) => ChatInput(
+                    key: _chatInputKey,
+                    onSendMessage: _handleSendMessage,
+                    busy: state.loading,
+                    connected: state.connected,
+                  ),
+                ),
+              ],
+            ),
+            if (_showConsole) _buildFloatingConsole(),
+            if (_isDraggingFiles) _buildDropOverlay(),
+          ],
+        ),
+      ),
+    );
+  }
 
-              Expanded(
-                child: _buildMessageList(chatService),
-              ),
+  Widget _buildDropOverlay() {
+    final colorScheme = Theme.of(context).colorScheme;
 
-              if (chatService.isLoading) _buildTypingIndicator(context),
-
-              ChatInput(
-                onSendMessage: _handleSendMessage,
-                enabled: !chatService.isLoading,
-                hintText: _getHintText(chatService),
-              ),
-            ],
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: Container(
+          color: colorScheme.primary.withValues(alpha: 0.08),
+          alignment: Alignment.center,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 20),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: colorScheme.primary, width: 2),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.12),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.upload_file,
+                  size: 40,
+                  color: colorScheme.primary,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Suelta para adjuntar',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.onSurface,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'PDF, Excel, CSV, TXT o imágenes',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
           ),
-
-          Positioned(
-            bottom: 80,
-            right: 16,
-            child: _buildConsoleToggleButton(),
-          ),
-
-          if (_showConsole) _buildFloatingConsole(),
-        ],
+        ),
       ),
     );
   }
 
   PreferredSizeWidget _buildAppBar(
-      BuildContext context, ChatServiceOllama chatService) {
+    BuildContext context,
+    ChatServiceOllama chatService,
+  ) {
     final colorScheme = Theme.of(context).colorScheme;
 
     return AppBar(
@@ -137,41 +249,19 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           const CapsuleIcon(size: 28),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'LightChat',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                  color: colorScheme.primary,
-                ),
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildConnectionIndicator(chatService),
-                  const SizedBox(width: 4),
-                  Text(
-                    chatService.selectedModel.isNotEmpty
-                        ? chatService.selectedModel
-                        : 'Sin modelo',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+          Text(
+            'LightChat',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: colorScheme.primary,
+            ),
           ),
         ],
       ),
       actions: [
         const ModelSelector(),
-        const SizedBox(width: 8),
+        _buildConsoleToggleButton(),
         PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert),
           tooltip: 'Más opciones',
@@ -183,17 +273,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   Icon(Icons.dns, size: 20, color: colorScheme.primary),
                   const SizedBox(width: 12),
-                  const Text('Gestionar Ollama'),
-                ],
-              ),
-            ),
-            PopupMenuItem(
-              value: 'clear',
-              child: Row(
-                children: [
-                  Icon(Icons.clear_all, size: 20, color: colorScheme.error),
-                  const SizedBox(width: 12),
-                  const Text('Limpiar historial'),
+                  const Expanded(child: Text('Gestionar Ollama')),
                 ],
               ),
             ),
@@ -203,11 +283,46 @@ class _ChatScreenState extends State<ChatScreen> {
                 children: [
                   Icon(Icons.refresh, size: 20, color: colorScheme.primary),
                   const SizedBox(width: 12),
-                  const Text('Recargar modelos'),
+                  const Expanded(child: Text('Recargar modelos')),
                 ],
               ),
             ),
             const PopupMenuDivider(),
+            PopupMenuItem(
+              value: 'free_gpu',
+              child: Row(
+                children: [
+                  Icon(Icons.memory, size: 20, color: colorScheme.tertiary),
+                  const SizedBox(width: 12),
+                  const Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Liberar GPU'),
+                        Text(
+                          'Descargar modelos de la VRAM',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const PopupMenuDivider(),
+            PopupMenuItem(
+              value: 'clear',
+              child: Row(
+                children: [
+                  Icon(Icons.clear_all, size: 20, color: colorScheme.error),
+                  const SizedBox(width: 12),
+                  const Expanded(child: Text('Limpiar historial')),
+                ],
+              ),
+            ),
           ],
         ),
         const SizedBox(width: 8),
@@ -215,74 +330,51 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildConnectionIndicator(ChatServiceOllama chatService) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isConnected = chatService.availableModels.isNotEmpty;
-
-    return Container(
-      width: 8,
-      height: 8,
-      decoration: BoxDecoration(
-        color: isConnected ? Colors.green : colorScheme.error,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: (isConnected ? Colors.green : colorScheme.error)
-                .withAlpha(77),
-            blurRadius: 4,
-            spreadRadius: 1,
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildConsoleToggleButton() {
-    return Consumer<OllamaService>(
-      builder: (context, ollama, _) {
-        if (ollama.serverInfo.status != OllamaStatus.running &&
-            ollama.serverInfo.status != OllamaStatus.starting) {
+    return Selector<OllamaService, bool>(
+      selector: (_, ollama) =>
+          ollama.serverInfo.status == OllamaStatus.running ||
+          ollama.serverInfo.status == OllamaStatus.starting,
+      builder: (context, visible, _) {
+        if (!visible) {
           return const SizedBox.shrink();
         }
-
-        return GestureDetector(
-          onTap: () {
+        return IconButton(
+          tooltip: _showConsole ? 'Cerrar consola' : 'Abrir consola de Ollama',
+          onPressed: () {
             setState(() {
               _showConsole = !_showConsole;
             });
           },
-          child: Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: _showConsole
-                  ? Theme.of(context).colorScheme.primary
-                  : Theme.of(context).colorScheme.surfaceContainerHighest,
-              border: Border.all(
-                color: Theme.of(context).colorScheme.outline,
-                width: 1,
-              ),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(
-              _showConsole ? Icons.terminal : Icons.terminal_outlined,
-              color: Theme.of(context).colorScheme.onSurface,
-              size: 20,
-            ),
-          ),
+          icon: Icon(_showConsole ? Icons.terminal : Icons.terminal_outlined),
         );
       },
     );
   }
 
   Widget _buildFloatingConsole() {
+    final size = MediaQuery.sizeOf(context);
+    final width = size.width < 600 ? math.max(180.0, size.width - 32) : 400.0;
+    final height = math.max(140.0, math.min(360.0, size.height - 180));
+
     return Consumer<OllamaService>(
       builder: (context, ollama, _) {
+        // Bajar al último registro cuando llega uno nuevo.
+        if (ollama.logs.length != _lastLogCount) {
+          _lastLogCount = ollama.logs.length;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || !_consoleScrollController.hasClients) return;
+            _consoleScrollController.jumpTo(
+              _consoleScrollController.position.maxScrollExtent,
+            );
+          });
+        }
+
         return Positioned(
-          bottom: 130,
+          bottom: size.height < 560 ? 96 : 130,
           right: 16,
-          width: 400,
-          height: 300,
+          width: width,
+          height: height,
           child: Container(
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surface,
@@ -295,12 +387,11 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Column(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest,
+                    color:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
                     border: Border(
                       bottom: BorderSide(
                           color: Theme.of(context).colorScheme.outline),
@@ -313,7 +404,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         'CONSOLA OLLAMA',
                         style: TextStyle(
                           fontFamily: 'Courier',
-                          fontSize: 10,
+                          fontSize: 12,
                           color: Theme.of(context).colorScheme.primary,
                           letterSpacing: 2,
                         ),
@@ -326,24 +417,25 @@ class _ChatScreenState extends State<ChatScreen> {
                             decoration: BoxDecoration(
                               color: ollama.serverInfo.status ==
                                       OllamaStatus.running
-                                  ? Colors.green
-                                  : Colors.orange,
+                                  ? Theme.of(context).colorScheme.tertiary
+                                  : Theme.of(context).colorScheme.error,
                               shape: BoxShape.circle,
                             ),
                           ),
                           const SizedBox(width: 8),
-                          GestureDetector(
-                            onTap: () {
+                          IconButton(
+                            tooltip: 'Cerrar consola',
+                            onPressed: () {
                               setState(() {
                                 _showConsole = false;
                               });
                             },
-                            child: Icon(
+                            icon: Icon(
                               Icons.close,
                               color: Theme.of(context)
                                   .colorScheme
                                   .onSurfaceVariant,
-                              size: 16,
+                              size: 18,
                             ),
                           ),
                         ],
@@ -353,9 +445,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 Expanded(
                   child: Container(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerLow,
+                    color: Theme.of(context).colorScheme.surfaceContainerLow,
                     child: ListView.builder(
                       controller: _consoleScrollController,
                       padding: const EdgeInsets.all(4),
@@ -368,12 +458,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest,
+                    color:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
                     border: Border(
                       top: BorderSide(
                           color: Theme.of(context).colorScheme.outline),
@@ -383,13 +472,22 @@ class _ChatScreenState extends State<ChatScreen> {
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       TextButton.icon(
-                        onPressed: () => _copyLogs(ollama.logs.join('\n')),
-                        icon: const Icon(Icons.copy, size: 14),
-                        label: const Text('COPIAR'),
+                        onPressed: ollama.clearLogs,
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        label: const Text('Limpiar'),
                         style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          minimumSize: Size.zero,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          minimumSize: const Size(0, 40),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton.icon(
+                        onPressed: () => _copyLogs(ollama.logs.join('\n')),
+                        icon: const Icon(Icons.copy, size: 18),
+                        label: const Text('Copiar'),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          minimumSize: const Size(0, 40),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -410,25 +508,25 @@ class _ChatScreenState extends State<ChatScreen> {
     if (line.contains('ERROR') ||
         line.contains('Error') ||
         line.contains('error')) {
-      textColor = Colors.red.shade400;
+      textColor = Theme.of(context).colorScheme.error;
     } else if (line.contains('WARNING') ||
         line.contains('Warning') ||
         line.contains('warning')) {
-      textColor = Colors.orange.shade400;
+      textColor = Theme.of(context).colorScheme.secondary;
     } else if (line.contains('INFO') ||
         line.contains('INFO:') ||
         line.contains('Starting') ||
         line.contains('Started')) {
-      textColor = Colors.blue.shade400;
+      textColor = Theme.of(context).colorScheme.primary;
     } else if (line.contains('SUCCESS') ||
         line.contains('Success') ||
         line.contains('ready') ||
         line.contains('Ready')) {
-      textColor = Colors.green.shade400;
+      textColor = Theme.of(context).colorScheme.tertiary;
     } else if (line.contains('stdout') || line.contains('STDOUT')) {
       textColor = Theme.of(context).colorScheme.onSurface;
     } else if (line.contains('stderr') || line.contains('STDERR')) {
-      textColor = Colors.yellow.shade400;
+      textColor = Theme.of(context).colorScheme.error;
     }
 
     return Padding(
@@ -437,7 +535,7 @@ class _ChatScreenState extends State<ChatScreen> {
         line,
         style: TextStyle(
           fontFamily: 'Courier',
-          fontSize: 9,
+          fontSize: 12,
           color: textColor,
         ),
       ),
@@ -462,84 +560,113 @@ class _ChatScreenState extends State<ChatScreen> {
       return _buildEmptyState();
     }
 
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      itemCount: messages.length,
-      itemBuilder: (context, index) {
-        final message = messages[index];
-        return MessageBubble(
-          message: message,
-          onRetry: message.isError ? () => _retryMessage(message) : null,
-          onCopy: () {
-            Clipboard.setData(ClipboardData(text: message.text));
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Respuesta copiada'),
-                duration: Duration(milliseconds: 1500),
-                behavior: SnackBarBehavior.floating,
-                margin: EdgeInsets.only(bottom: 80, left: 16, right: 16),
-              ),
-            );
-          },
-          onImageTap: () {},
-        );
-      },
+    _scheduleAutoScroll();
+
+    return SelectionArea(
+      child: ListView.builder(
+        controller: _scrollController,
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        itemCount: messages.length,
+        itemBuilder: (context, index) {
+          final message = messages[index];
+          return MessageBubble(
+            message: message,
+            onRetry: message.isError && index == messages.length - 1
+                ? _retryMessage
+                : null,
+            onCopy: () {
+              Clipboard.setData(ClipboardData(text: message.text));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Respuesta copiada'),
+                  duration: Duration(milliseconds: 1500),
+                  behavior: SnackBarBehavior.floating,
+                  margin: EdgeInsets.only(bottom: 80, left: 16, right: 16),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
   Widget _buildEmptyState() {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: colorScheme.primaryContainer,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              Icons.chat_bubble_outline,
-              size: 40,
-              color: colorScheme.onPrimaryContainer,
-            ),
-          ),
-          const SizedBox(height: 24),
-          Text(
-            '¡Bienvenido a LightChat!',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: colorScheme.onSurface,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Inicia una conversación con tu IA favorita',
-            style: TextStyle(
-              fontSize: 14,
-              color: colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => const OllamaManagerScreen(),
-                  fullscreenDialog: true,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 24,
                 ),
-              );
-            },
-            icon: const Icon(Icons.smart_toy),
-            label: const Text('Conectar Ollama'),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 80,
+                      height: 80,
+                      decoration: BoxDecoration(
+                        color: colorScheme.primaryContainer,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.chat_bubble_outline,
+                        size: 40,
+                        color: colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      '¡Bienvenido a LightChat!',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Inicia una conversación con tu IA favorita',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Arrastra o adjunta un PDF o Excel para preguntar sobre él',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    FilledButton.icon(
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => const OllamaManagerScreen(),
+                            fullscreenDialog: true,
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.smart_toy),
+                      label: const Text('Configurar Ollama'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -567,30 +694,36 @@ class _ChatScreenState extends State<ChatScreen> {
               fontStyle: FontStyle.italic,
             ),
           ),
+          const SizedBox(width: 12),
+          TextButton.icon(
+            onPressed: _stopGeneration,
+            icon: const Icon(Icons.stop_circle_outlined, size: 18),
+            label: const Text('Detener'),
+            style: TextButton.styleFrom(
+              foregroundColor: colorScheme.error,
+              minimumSize: const Size(0, 40),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  String _getHintText(ChatServiceOllama chatService) {
-    if (chatService.availableModels.isEmpty) {
-      return 'Conecta Ollama primero…';
-    }
-    if (chatService.isLoading) {
-      return 'Esperando respuesta…';
-    }
-    return 'Escribe un mensaje…';
-  }
-
   void _handleMenuAction(String action, ChatServiceOllama chatService) {
     switch (action) {
       case 'ollama_manager':
-        Navigator.of(context).push(
+        Navigator.of(context)
+            .push(
           MaterialPageRoute(
             builder: (context) => const OllamaManagerScreen(),
             fullscreenDialog: true,
           ),
-        );
+        )
+            .then((_) {
+          if (mounted) {
+            chatService.loadModels();
+          }
+        });
         break;
       case 'clear':
         _showClearHistoryDialog(chatService);
@@ -605,7 +738,40 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         );
         break;
+      case 'free_gpu':
+        _freeGpu();
+        break;
     }
+  }
+
+  /// Descarga los modelos cargados de la VRAM sin cerrar Ollama.
+  Future<void> _freeGpu() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final ollama = context.read<OllamaService>();
+    if (ollama.serverInfo.status != OllamaStatus.running) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Ollama no está en marcha: no hay nada que liberar'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    final freed = await ollama.unloadLoadedModels();
+    if (!mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          freed == 0
+              ? 'No había modelos cargados en la GPU'
+              : '$freed modelo(s) liberados. Ollama sigue en marcha y '
+                  'recargará el modelo cuando escribas.',
+        ),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   void _showClearHistoryDialog(ChatServiceOllama chatService) {

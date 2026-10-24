@@ -15,6 +15,9 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
   late TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
+  bool _filterUncensored = false;
+  bool _filterMultimodal = false;
+  bool _filterSmall = false;
 
   @override
   void initState() {
@@ -27,7 +30,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
       if (!ollamaService.isInitialized) {
         ollamaService.initialize();
       }
-      // Cargar modelos disponibles desde ollama.com/v1/models
+      // Cargar modelos del catálogo online de Ollama
       ollamaService.fetchAvailableModels();
       // Cargar modelos instalados localmente
       ollamaService.checkInstallation();
@@ -74,7 +77,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
     final colorScheme = theme.colorScheme;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 48, 16, 16),
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
@@ -99,19 +102,18 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'OLLAMA MANAGER',
+                  'Gestor de Ollama',
                   style: TextStyle(
                     color: colorScheme.primary,
-                    fontSize: 18,
+                    fontSize: 20,
                     fontWeight: FontWeight.bold,
-                    letterSpacing: 1,
                   ),
                 ),
                 Text(
                   'Gestiona tus modelos locales',
                   style: TextStyle(
-                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                    fontSize: 12,
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 14,
                   ),
                 ),
               ],
@@ -129,13 +131,14 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
         final status = ollama.serverInfo.status;
         final isRunning = status == OllamaStatus.running;
         final colorScheme = Theme.of(context).colorScheme;
-        final statusColor = isRunning ? Colors.green : colorScheme.error;
+        final statusColor =
+            isRunning ? colorScheme.tertiary : colorScheme.error;
 
         return Container(
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
-            color: statusColor.withValues(alpha: 0.1),
+            color: statusColor.withValues(alpha: 0.14),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
               color: statusColor.withValues(alpha: 0.3),
@@ -164,7 +167,9 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      isRunning ? 'Ollama ejecutándose' : 'Ollama no disponible',
+                      isRunning
+                          ? 'Ollama ejecutándose'
+                          : 'Ollama no disponible',
                       style: TextStyle(
                         color: statusColor,
                         fontWeight: FontWeight.bold,
@@ -175,8 +180,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                       Text(
                         'Versión: ${ollama.serverInfo.version}',
                         style: TextStyle(
-                          color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                          fontSize: 12,
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 13,
                         ),
                       ),
                   ],
@@ -191,11 +196,40 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                     backgroundColor: statusColor,
                     foregroundColor: Colors.white,
                   ),
+                )
+              else
+                TextButton.icon(
+                  onPressed: _freeGpu,
+                  icon: const Icon(Icons.memory, size: 18),
+                  label: const Text('Liberar GPU'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: statusColor,
+                    minimumSize: const Size(0, 40),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                  ),
                 ),
             ],
           ),
         );
       },
+    );
+  }
+
+  /// Descarga de la VRAM los modelos cargados, sin detener Ollama.
+  Future<void> _freeGpu() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final freed = await OllamaService.instance.unloadLoadedModels();
+    if (!mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          freed == 0
+              ? 'No había modelos cargados en la GPU'
+              : '$freed modelo(s) liberados. Ollama sigue en marcha.',
+        ),
+        duration: const Duration(seconds: 3),
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
@@ -206,11 +240,13 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
+        color: colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(8),
       ),
       child: TabBar(
         controller: _tabController,
+        isScrollable: true,
+        labelPadding: const EdgeInsets.symmetric(horizontal: 12),
         indicator: BoxDecoration(
           color: colorScheme.primary,
           borderRadius: BorderRadius.circular(8),
@@ -218,21 +254,28 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
         labelColor: colorScheme.onPrimary,
         unselectedLabelColor: colorScheme.onSurfaceVariant,
         tabs: const [
-          Tab(text: 'CATÁLOGO', icon: Icon(Icons.explore)),
-          Tab(text: 'INSTALADOS', icon: Icon(Icons.download_done)),
-          Tab(text: 'CONFIG', icon: Icon(Icons.settings)),
-          Tab(text: 'LOGS', icon: Icon(Icons.terminal)),
+          Tab(text: 'Catálogo', icon: Icon(Icons.explore)),
+          Tab(text: 'Instalados', icon: Icon(Icons.download_done)),
+          Tab(text: 'Ajustes', icon: Icon(Icons.settings)),
+          Tab(text: 'Registros', icon: Icon(Icons.terminal)),
         ],
       ),
     );
   }
 
-  /// Catálogo de modelos disponibles para descargar (de ollama.com/v1/models)
+  /// Catálogo de modelos disponibles para descargar desde Ollama
   Widget _buildModelsTab() {
     return Consumer<OllamaService>(
       builder: (context, ollama, _) {
         final colorScheme = Theme.of(context).colorScheme;
         final available = ollama.availableModels;
+        final filtered = OllamaService.filterAvailableModels(
+          models: available,
+          query: _searchQuery,
+          uncensoredOnly: _filterUncensored,
+          multimodalOnly: _filterMultimodal,
+          smallOnly: _filterSmall,
+        );
 
         return Column(
           children: [
@@ -244,31 +287,92 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                     setState(() => _searchQuery = value.toLowerCase()),
                 style: TextStyle(color: colorScheme.onSurface),
                 decoration: InputDecoration(
-                  hintText: 'Buscar modelo para descargar (ej: llama3, mistral, dolphin3)...',
-                  hintStyle: TextStyle(
-                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                  ),
+                  labelText: 'Buscar modelos',
+                  hintText: 'Ej.: llama3, mistral',
+                  hintStyle: TextStyle(color: colorScheme.onSurfaceVariant),
                   prefixIcon: Icon(
                     Icons.search,
                     color: colorScheme.onSurfaceVariant,
                   ),
                   suffixIcon: IconButton(
-                    icon: const Icon(Icons.refresh),
+                    icon: ollama.isLoadingAvailableModels
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh),
                     tooltip: 'Actualizar catálogo desde ollama.com',
                     onPressed: () async {
-                      await ollama.fetchAvailableModels(forceRefresh: true);
+                      if (!ollama.isLoadingAvailableModels) {
+                        await ollama.fetchAvailableModels(forceRefresh: true);
+                      }
                       if (mounted) setState(() {});
                     },
                   ),
                   filled: true,
-                  fillColor: colorScheme.surfaceContainerHighest,
+                  fillColor: colorScheme.surfaceContainerLow,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide.none,
+                    borderSide: BorderSide(color: colorScheme.outlineVariant),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: colorScheme.outlineVariant),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(
+                      color: colorScheme.primary,
+                      width: 2,
+                    ),
                   ),
                 ),
               ),
             ),
+
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  FilterChip(
+                    label: const Text('Menos censura'),
+                    selected: _filterUncensored,
+                    onSelected: (selected) =>
+                        setState(() => _filterUncensored = selected),
+                  ),
+                  const SizedBox(width: 8),
+                  FilterChip(
+                    label: const Text('Multimodal'),
+                    selected: _filterMultimodal,
+                    onSelected: (selected) =>
+                        setState(() => _filterMultimodal = selected),
+                  ),
+                  const SizedBox(width: 8),
+                  FilterChip(
+                    label: const Text('Pequeños (≤8B)'),
+                    selected: _filterSmall,
+                    onSelected: (selected) =>
+                        setState(() => _filterSmall = selected),
+                  ),
+                ],
+              ),
+            ),
+            if (_filterUncensored)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Muestra variantes Dolphin y modelos marcados como uncensored; el Llama original no se etiqueta así.',
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
 
             // Instalar modelo personalizado
             Padding(
@@ -286,15 +390,15 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                   Icon(
                     Icons.cloud_download,
                     size: 16,
-                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                    color: colorScheme.onSurfaceVariant,
                   ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      '${available.length} modelo(s) disponible(s) para descargar',
+                      '${filtered.length} de ${available.length} modelo(s)',
                       style: TextStyle(
-                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 13,
                       ),
                     ),
                   ),
@@ -303,10 +407,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                     Text(
                       'Actualizado ${_formatRelativeTime(ollama.availableModelsLastUpdate!)}',
                       style: TextStyle(
-                        color: colorScheme.onSurfaceVariant.withValues(
-                          alpha: 0.5,
-                        ),
-                        fontSize: 11,
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 12,
                       ),
                     ),
                   ],
@@ -316,90 +418,130 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
 
             const SizedBox(height: 8),
 
+            if (ollama.availableModelsError != null && available.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Material(
+                  color: colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Icon(Icons.wifi_off, color: colorScheme.error),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'No se pudo actualizar; mostrando modelos anteriores.',
+                            style: TextStyle(
+                              color: colorScheme.onErrorContainer,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
             Expanded(
               child: available.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.cloud_off,
-                            size: 64,
-                            color: colorScheme.outline.withValues(alpha: 0.6),
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No hay modelos disponibles',
-                            style: TextStyle(
-                              color: colorScheme.onSurfaceVariant,
-                              fontSize: 16,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Asegúrate de tener conexión a internet',
-                            style: TextStyle(
-                              color: colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.6,
+                  ? _buildCatalogEmptyState(ollama, colorScheme)
+                  : filtered.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              'No hay modelos que coincidan con la búsqueda y los filtros.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: colorScheme.onSurfaceVariant,
                               ),
-                              fontSize: 13,
                             ),
-                            textAlign: TextAlign.center,
                           ),
-                          const SizedBox(height: 16),
-                          FilledButton.icon(
-                            onPressed: () async {
-                              await ollama.fetchAvailableModels(
-                                  forceRefresh: true);
-                              if (mounted) setState(() {});
-                            },
-                            icon: const Icon(Icons.refresh),
-                            label: const Text('Reintentar'),
-                          ),
-                        ],
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: available.length,
-                      itemBuilder: (context, index) {
-                        final model = available[index];
-                        final name = model['name'] as String;
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: filtered.length,
+                          itemBuilder: (context, index) {
+                            final model = filtered[index];
+                            final name = model['name'] as String;
 
-                        final tagsList =
-                            (model['tags'] as List<dynamic>?)
-                                ?.cast<String>() ?? [];
-                        final description =
-                            model['description'] as String? ?? '';
+                            final isInstalled =
+                                ollama.models.any((m) => m.name == name);
+                            final isPulling =
+                                ollama.isPulling && ollama.pullingModel == name;
 
-                        final matchesSearch = _searchQuery.isEmpty ||
-                            name.toLowerCase().contains(_searchQuery) ||
-                            description.toLowerCase().contains(_searchQuery) ||
-                            tagsList.any(
-                                (t) => t.toLowerCase().contains(_searchQuery));
-
-                        if (!matchesSearch) {
-                          return const SizedBox.shrink();
-                        }
-
-                        final isInstalled =
-                            ollama.models.any((m) => m.name == name);
-                        final isPulling =
-                            ollama.isPulling &&
-                            ollama.pullingModel == name;
-
-                        return _buildAvailableModelCard(
-                          model,
-                          isInstalled,
-                          isPulling,
-                          ollama,
-                        );
-                      },
-                    ),
+                            return _buildAvailableModelCard(
+                              model,
+                              isInstalled,
+                              isPulling,
+                              ollama,
+                            );
+                          },
+                        ),
             ),
           ],
         );
       },
+    );
+  }
+
+  Widget _buildCatalogEmptyState(
+    OllamaService ollama,
+    ColorScheme colorScheme,
+  ) {
+    final isLoading = ollama.isLoadingAvailableModels;
+    final error = ollama.availableModelsError;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isLoading)
+              const CircularProgressIndicator()
+            else
+              Icon(
+                error == null ? Icons.cloud_download_outlined : Icons.wifi_off,
+                size: 56,
+                color: error == null ? colorScheme.primary : colorScheme.error,
+              ),
+            const SizedBox(height: 16),
+            Text(
+              isLoading
+                  ? 'Cargando modelos oficiales de Ollama…'
+                  : error == null
+                      ? 'No hay modelos disponibles'
+                      : 'No se pudo cargar el catálogo',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            if (!isLoading) ...[
+              const SizedBox(height: 8),
+              Text(
+                error ??
+                    'Comprueba la conexión a internet y vuelve a intentarlo.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: ollama.isLoadingAvailableModels
+                    ? null
+                    : () => ollama.fetchAvailableModels(forceRefresh: true),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Reintentar catálogo'),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -414,11 +556,10 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
     final colorScheme = theme.colorScheme;
     final name = model['name'] as String;
     final description = model['description'] as String;
-    final tags =
-        (model['tags'] as List<dynamic>?)?.cast<String>() ?? [];
+    final tags = (model['tags'] as List<dynamic>?)?.cast<String>() ?? [];
     final size = model['size'] as String? ?? 'Desconocido';
     final isMultimodal = model['multimodal'] == true;
-    final isUncensored = tags.any((t) => t.toLowerCase().contains('uncensored'));
+    final isUncensored = model['uncensored'] == true;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -427,8 +568,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: isInstalled
-              ? Colors.green.withValues(alpha: 0.3)
-              : colorScheme.outline.withValues(alpha: 0.2),
+              ? colorScheme.tertiary.withValues(alpha: 0.55)
+              : colorScheme.outlineVariant,
         ),
         boxShadow: [
           BoxShadow(
@@ -497,10 +638,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                       Text(
                         description,
                         style: TextStyle(
-                          color: colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.7,
-                          ),
-                          fontSize: 13,
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 14,
                         ),
                       ),
                     ],
@@ -518,7 +657,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                     final tagLower = tag.toLowerCase();
                     Color tagColor;
                     if (tagLower.contains('uncensored')) {
-                      tagColor = Colors.orange;
+                      tagColor = colorScheme.secondary;
                     } else if (tagLower.contains('vision') ||
                         tagLower.contains('multimodal') ||
                         tagLower.contains('llava')) {
@@ -526,21 +665,15 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                     } else if (RegExp(r'\d+b').hasMatch(tag)) {
                       tagColor = colorScheme.secondary;
                     } else {
-                      tagColor = colorScheme.onSurfaceVariant.withValues(
-                        alpha: 0.5,
-                      );
+                      tagColor = colorScheme.onSurfaceVariant;
                     }
                     return Chip(
                       label: Text(
                         tag,
                         style: TextStyle(
-                          fontSize: 10,
+                          fontSize: 12,
                           fontWeight: FontWeight.w500,
-                          color: tagColor == colorScheme.onSurfaceVariant
-                              ? colorScheme.onSurfaceVariant.withValues(
-                                  alpha: 0.9,
-                                )
-                              : tagColor,
+                          color: tagColor,
                         ),
                       ),
                       backgroundColor: tagColor.withValues(alpha: 0.1),
@@ -557,17 +690,15 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                 Icon(
                   Icons.storage,
                   size: 14,
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                  color: colorScheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     size,
                     style: TextStyle(
-                      color: colorScheme.onSurfaceVariant.withValues(
-                        alpha: 0.7,
-                      ),
-                      fontSize: 12,
+                      color: colorScheme.onSurfaceVariant,
+                      fontSize: 13,
                     ),
                   ),
                 ),
@@ -597,8 +728,6 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                       ),
                       padding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 8),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                   )
                 else
@@ -611,8 +740,6 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                       foregroundColor: colorScheme.onPrimary,
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 10),
-                      minimumSize: Size.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                   ),
               ],
@@ -644,7 +771,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                 Icon(
                   Icons.inbox_outlined,
                   size: 64,
-                  color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.6),
+                  color: Theme.of(context).colorScheme.outline,
                 ),
                 const SizedBox(height: 16),
                 Text(
@@ -685,10 +812,10 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
+        color: colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: Colors.green.withValues(alpha: 0.3),
+          color: colorScheme.tertiary.withValues(alpha: 0.55),
         ),
         boxShadow: [
           BoxShadow(
@@ -706,15 +833,15 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: Colors.green.withValues(alpha: 0.15),
+                color: colorScheme.tertiaryContainer,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: Colors.green.withValues(alpha: 0.3),
+                  color: colorScheme.tertiary.withValues(alpha: 0.45),
                 ),
               ),
               child: Icon(
                 isMultimodal ? Icons.image : Icons.check_circle,
-                color: Colors.green,
+                color: colorScheme.onTertiaryContainer,
                 size: 24,
               ),
             ),
@@ -755,7 +882,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                               Text(
                                 'Visión',
                                 style: TextStyle(
-                                  fontSize: 10,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                   color: colorScheme.primary,
                                 ),
@@ -772,18 +899,14 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                       Icon(
                         Icons.storage,
                         size: 14,
-                        color: colorScheme.onSurfaceVariant.withValues(
-                          alpha: 0.6,
-                        ),
+                        color: colorScheme.onSurfaceVariant,
                       ),
                       const SizedBox(width: 6),
                       Text(
                         'Tamaño: ${model.sizeFormatted}',
                         style: TextStyle(
-                          color: colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.7,
-                          ),
-                          fontSize: 13,
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 14,
                         ),
                       ),
                     ],
@@ -803,10 +926,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                         Text(
                           'Actualizado: ${_formatDate(model.modifiedAt!)}',
                           style: TextStyle(
-                            color: colorScheme.onSurfaceVariant.withValues(
-                              alpha: 0.6,
-                            ),
-                            fontSize: 11,
+                            color: colorScheme.onSurfaceVariant,
+                            fontSize: 12,
                           ),
                         ),
                       ],
@@ -824,10 +945,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                 side: BorderSide(
                   color: colorScheme.error.withValues(alpha: 0.5),
                 ),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 8),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               ),
             ),
           ],
@@ -859,7 +978,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                 decoration: InputDecoration(
                   hintText: 'localhost:11434',
                   hintStyle: TextStyle(
-                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                    color: colorScheme.onSurfaceVariant,
                   ),
                   filled: true,
                   fillColor: colorScheme.surfaceContainerHighest,
@@ -889,9 +1008,9 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                     return Text(
                       ollama.logs[index],
                       style: TextStyle(
-                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+                        color: colorScheme.onSurfaceVariant,
                         fontFamily: 'monospace',
-                        fontSize: 11,
+                        fontSize: 12,
                       ),
                     );
                   },
@@ -911,10 +1030,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                       'Estado', _getStatusText(ollama.serverInfo.status)),
                   _buildInfoRow(
                       'Versión', ollama.serverInfo.version ?? 'Desconocida'),
-                  _buildInfoRow(
-                      'Puerto', ollama.serverInfo.port.toString()),
-                  _buildInfoRow(
-                      'Modelos', ollama.models.length.toString()),
+                  _buildInfoRow('Puerto', ollama.serverInfo.port.toString()),
+                  _buildInfoRow('Modelos', ollama.models.length.toString()),
                 ],
               ),
             ),
@@ -947,7 +1064,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                     ),
                   ),
                   TextButton.icon(
-                    onPressed: () {},
+                    onPressed: () => ollama.clearLogs(),
                     icon: const Icon(Icons.clear_all, size: 16),
                     label: const Text('Limpiar'),
                   ),
@@ -1009,8 +1126,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                     Text(
                       subtitle,
                       style: TextStyle(
-                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 14,
                       ),
                     ),
                   ],
@@ -1036,8 +1153,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
           Text(
             '$label: ',
             style: TextStyle(
-              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-              fontSize: 13,
+              color: colorScheme.onSurfaceVariant,
+              fontSize: 14,
             ),
           ),
           Text(
@@ -1059,7 +1176,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Modelo $name instalado correctamente'),
-          backgroundColor: Colors.green,
+          backgroundColor: Theme.of(context).colorScheme.tertiary,
         ),
       );
     }
@@ -1073,10 +1190,11 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: colorScheme.surface,
-        title: Text('Eliminar modelo', style: TextStyle(color: colorScheme.onSurface)),
+        title: Text('Eliminar modelo',
+            style: TextStyle(color: colorScheme.onSurface)),
         content: Text(
           '¿Estás seguro de que quieres eliminar "$name"?',
-          style: TextStyle(color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8)),
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
         ),
         actions: [
           TextButton(
@@ -1100,7 +1218,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Modelo $name eliminado'),
-            backgroundColor: Colors.green,
+            backgroundColor: colorScheme.tertiary,
           ),
         );
       }
@@ -1136,7 +1254,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
               Text(
                 'Visión',
                 style: TextStyle(
-                  fontSize: 10,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: colorScheme.primary,
                 ),
@@ -1152,7 +1270,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           decoration: BoxDecoration(
-            color: Colors.orange.withValues(alpha: 0.15),
+            color: colorScheme.secondaryContainer,
             borderRadius: BorderRadius.circular(6),
           ),
           child: Row(
@@ -1161,15 +1279,15 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
               Icon(
                 Icons.lock_open,
                 size: 12,
-                color: Colors.orange,
+                color: colorScheme.onSecondaryContainer,
               ),
               const SizedBox(width: 4),
               Text(
-                'Sin censura',
+                'Menos censura',
                 style: TextStyle(
-                  fontSize: 10,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: Colors.orange,
+                  color: colorScheme.onSecondaryContainer,
                 ),
               ),
             ],
@@ -1183,8 +1301,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
           color: isInstalled
-              ? Colors.green.withValues(alpha: 0.15)
-              : Colors.orange.withValues(alpha: 0.15),
+              ? colorScheme.tertiaryContainer
+              : colorScheme.secondaryContainer,
           borderRadius: BorderRadius.circular(6),
         ),
         child: Row(
@@ -1193,15 +1311,19 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
             Icon(
               isInstalled ? Icons.check_circle : Icons.cloud_download,
               size: 12,
-              color: isInstalled ? Colors.green : Colors.orange,
+              color: isInstalled
+                  ? colorScheme.onTertiaryContainer
+                  : colorScheme.onSecondaryContainer,
             ),
             const SizedBox(width: 4),
             Text(
               isInstalled ? 'Instalado' : 'Disponible',
               style: TextStyle(
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: FontWeight.w600,
-                color: isInstalled ? Colors.green : Colors.orange,
+                color: isInstalled
+                    ? colorScheme.onTertiaryContainer
+                    : colorScheme.onSecondaryContainer,
               ),
             ),
           ],
@@ -1213,8 +1335,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
   }
 
   /// Campo para instalar un modelo personalizado (ej: dolphin3:8b)
-  Widget _buildCustomInstallCard(
-      BuildContext context, OllamaService ollama) {
+  Widget _buildCustomInstallCard(BuildContext context, OllamaService ollama) {
     final colorScheme = Theme.of(context).colorScheme;
     final controller = TextEditingController();
 
@@ -1253,10 +1374,9 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
             controller: controller,
             style: TextStyle(color: colorScheme.onSurface),
             decoration: InputDecoration(
-              hintText: 'Ej: dolphin3:8b, nous-hermes2:7b, wizardlm2:7b...',
-              hintStyle: TextStyle(
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-              ),
+              labelText: 'Nombre y etiqueta del modelo',
+              hintText: 'Ej.: dolphin3:8b',
+              hintStyle: TextStyle(color: colorScheme.onSurfaceVariant),
               prefixIcon: Icon(
                 Icons.model_training,
                 color: colorScheme.onSurfaceVariant,
@@ -1281,8 +1401,8 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
               Text(
                 'Escribe el nombre completo del modelo (con tag, ej: :8b) y presiona Enter',
                 style: TextStyle(
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                  fontSize: 11,
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 12,
                 ),
               ),
             ],
@@ -1318,22 +1438,21 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
   Color _logLineColor(String line, ColorScheme colorScheme) {
     final lower = line.toLowerCase();
     if (lower.contains('error')) {
-      return Colors.red.shade400;
+      return colorScheme.error;
     }
     if (lower.contains('warning')) {
-      return Colors.orange.shade400;
+      return colorScheme.secondary;
     }
     if (lower.contains('info') ||
         lower.contains('starting') ||
         lower.contains('started')) {
-      return Colors.blue.shade400;
+      return colorScheme.primary;
     }
-    if (lower.contains('success') ||
-        lower.contains('ready')) {
-      return Colors.green.shade400;
+    if (lower.contains('success') || lower.contains('ready')) {
+      return colorScheme.tertiary;
     }
     if (lower.contains('stderr')) {
-      return Colors.yellow.shade400;
+      return colorScheme.error;
     }
     return colorScheme.onSurfaceVariant;
   }
@@ -1346,7 +1465,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
         line,
         style: TextStyle(
           fontFamily: 'Courier',
-          fontSize: 9,
+          fontSize: 12,
           color: _logLineColor(line, colorScheme),
         ),
       ),

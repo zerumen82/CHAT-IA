@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:system_info2/system_info2.dart';
@@ -105,7 +106,7 @@ class HardwareDetectorService {
       final gpuInfo = await _detectGPU();
 
       // Generar recomendaciones
-      final recommendedModels = _generateRecommendations(
+      final recommendedModels = recommendedModelsForHardware(
         hasGPU: gpuInfo['hasGPU'] as bool,
         gpuVRAM: gpuInfo['vram'] as int?,
         systemRAM: systemRAM,
@@ -133,7 +134,7 @@ class HardwareDetectorService {
         cpuCores: Platform.numberOfProcessors,
         systemRAM: 8,
         hasGPU: false,
-        recommendedModels: _generateRecommendations(
+        recommendedModels: recommendedModelsForHardware(
           hasGPU: false,
           gpuVRAM: null,
           systemRAM: 8,
@@ -215,41 +216,37 @@ class HardwareDetectorService {
       bool hasROCm = false;
 
       final psOutput = psResult.stdout.toString();
-      debugPrint('PowerShell GPU output: $psOutput');
 
       // Parsear JSON de PowerShell
       if (psOutput.isNotEmpty && !psOutput.contains('error')) {
         try {
-          // Limpiar salida
-          final cleanOutput = psOutput.trim();
-          final jsonStart = cleanOutput.indexOf('{');
-          final jsonEnd = cleanOutput.lastIndexOf('}');
-          
-          if (jsonStart >= 0 && jsonEnd > jsonStart) {
-            final jsonStr = cleanOutput.substring(jsonStart, jsonEnd + 1);
-            final data = _parseSimpleJson(jsonStr);
-            
-            if (data['Name'] != null) {
-              gpuModel = data['Name'].toString();
-              
-              // IMPORTANTE: Priorizar estimación basada en modelo sobre AdapterRAM
-              // Windows suele reportar valores incorrectos de VRAM en muchas GPUs
-              final estimatedVram = _estimateVRAMFromModel(gpuModel);
-              
-              // Obtener VRAM del AdapterRAM (en bytes) como fallback
-              if (data['AdapterRAM'] != null) {
-                final adapterRam = int.tryParse(data['AdapterRAM'].toString()) ?? 0;
-                if (adapterRam > 0) {
-                  final reportedVram = (adapterRam / (1024 * 1024 * 1024)).round();
-                  // Usar el MAYOR valor entre estimación y reportado
-                  // La estimación es más precisa para GPUs conocidas
-                  vram = reportedVram > estimatedVram ? reportedVram : estimatedVram;
-                } else {
-                  vram = estimatedVram;
-                }
-              } else {
+          final decoded = jsonDecode(psOutput);
+          final controllers = switch (decoded) {
+            List<dynamic> values =>
+              values.whereType<Map<String, dynamic>>().toList(),
+            Map<String, dynamic> value => [value],
+            _ => <Map<String, dynamic>>[],
+          };
+          final data = controllers.firstWhere(
+            (controller) => controller['Name'] != null,
+            orElse: () => <String, dynamic>{},
+          );
+
+          if (data['Name'] != null) {
+            gpuModel = data['Name'].toString();
+            final estimatedVram = _estimateVRAMFromModel(gpuModel);
+            final reportedBytes =
+                int.tryParse(data['AdapterRAM']?.toString() ?? '');
+
+            if (reportedBytes != null && reportedBytes > 0) {
+              const adapterRamLimit = 4294967295;
+              if (reportedBytes >= adapterRamLimit && estimatedVram != null) {
                 vram = estimatedVram;
+              } else {
+                vram = (reportedBytes / (1024 * 1024 * 1024)).round();
               }
+            } else {
+              vram = estimatedVram;
             }
           }
         } catch (e) {
@@ -270,7 +267,7 @@ class HardwareDetectorService {
         final lines = wmicOutput.split('\n');
         for (final line in lines) {
           final trimmedLine = line.trim();
-          if (trimmedLine.isEmpty || 
+          if (trimmedLine.isEmpty ||
               trimmedLine.toLowerCase().contains('name') ||
               trimmedLine.toLowerCase().contains('adapterram')) {
             continue;
@@ -283,7 +280,7 @@ class HardwareDetectorService {
               trimmedLine.toLowerCase().contains('geforce')) {
             gpuModel = trimmedLine.replaceAll(RegExp(r'\s+'), ' ').trim();
             hasCUDA = true;
-            
+
             // Estimar VRAM basado en el modelo
             vram = _estimateVRAMFromModel(trimmedLine);
             break;
@@ -302,7 +299,7 @@ class HardwareDetectorService {
           // Buscar Intel Arc
           if (trimmedLine.toLowerCase().contains('intel') &&
               (trimmedLine.toLowerCase().contains('arc') ||
-               trimmedLine.toLowerCase().contains('iris'))) {
+                  trimmedLine.toLowerCase().contains('iris'))) {
             gpuModel = trimmedLine.replaceAll(RegExp(r'\s+'), ' ').trim();
             vram ??= 8;
             break;
@@ -313,13 +310,12 @@ class HardwareDetectorService {
       // Verificar si es NVIDIA para CUDA
       if (gpuModel != null) {
         final gpuLower = gpuModel.toLowerCase();
-        hasCUDA = gpuLower.contains('nvidia') || 
-                  gpuLower.contains('rtx') || 
-                  gpuLower.contains('gtx') ||
-                  gpuLower.contains('geforce');
-        hasROCm = gpuLower.contains('amd') || 
-                  gpuLower.contains('radeon');
-        
+        hasCUDA = gpuLower.contains('nvidia') ||
+            gpuLower.contains('rtx') ||
+            gpuLower.contains('gtx') ||
+            gpuLower.contains('geforce');
+        hasROCm = gpuLower.contains('amd') || gpuLower.contains('radeon');
+
         // Si no tenemos VRAM, estimar del modelo
         vram ??= _estimateVRAMFromModel(gpuModel);
 
@@ -338,9 +334,9 @@ class HardwareDetectorService {
   }
 
   /// Estimar VRAM basado en el modelo de GPU
-  static int _estimateVRAMFromModel(String model) {
+  static int? _estimateVRAMFromModel(String model) {
     final modelLower = model.toLowerCase();
-    
+
     // NVIDIA RTX 40 series
     if (modelLower.contains('4090')) return 24;
     if (modelLower.contains('4080')) return 16;
@@ -349,7 +345,7 @@ class HardwareDetectorService {
     if (modelLower.contains('4060 ti')) return 16;
     if (modelLower.contains('4060')) return 8;
     if (modelLower.contains('4050')) return 6;
-    
+
     // NVIDIA RTX 30 series
     if (modelLower.contains('3090 ti')) return 24;
     if (modelLower.contains('3090')) return 24;
@@ -360,7 +356,7 @@ class HardwareDetectorService {
     if (modelLower.contains('3060 ti')) return 8;
     if (modelLower.contains('3060')) return 12;
     if (modelLower.contains('3050')) return 8;
-    
+
     // NVIDIA RTX 20 series
     if (modelLower.contains('2080 ti')) return 11;
     if (modelLower.contains('2080 super')) return 8;
@@ -369,7 +365,7 @@ class HardwareDetectorService {
     if (modelLower.contains('2070')) return 8;
     if (modelLower.contains('2060 super')) return 8;
     if (modelLower.contains('2060')) return 6;
-    
+
     // NVIDIA GTX 16/10 series
     if (modelLower.contains('1660')) return 6;
     if (modelLower.contains('1650')) return 4;
@@ -378,57 +374,28 @@ class HardwareDetectorService {
     if (modelLower.contains('1070')) return 8;
     if (modelLower.contains('1060')) return 6;
     if (modelLower.contains('1050')) return 4;
-    
+
     // AMD Radeon RX 7000 series
     if (modelLower.contains('7900 xtx')) return 24;
     if (modelLower.contains('7900 xt')) return 20;
     if (modelLower.contains('7800 xt')) return 16;
     if (modelLower.contains('7700 xt')) return 12;
     if (modelLower.contains('7600')) return 8;
-    
+
     // AMD Radeon RX 6000 series
     if (modelLower.contains('6900')) return 16;
     if (modelLower.contains('6800')) return 16;
     if (modelLower.contains('6700')) return 10;
     if (modelLower.contains('6600')) return 8;
     if (modelLower.contains('6500')) return 4;
-    
+
     // Intel Arc
     if (modelLower.contains('a770')) return 16;
     if (modelLower.contains('a750')) return 8;
     if (modelLower.contains('a580')) return 8;
     if (modelLower.contains('a380')) return 6;
-    
-    // Valor por defecto
-    return 8;
-  }
 
-  /// Parsear JSON simple sin dependencias externas
-  static Map<String, dynamic> _parseSimpleJson(String json) {
-    final result = <String, dynamic>{};
-    
-    // Remover llaves externas
-    json = json.trim();
-    if (json.startsWith('{')) json = json.substring(1);
-    if (json.endsWith('}')) json = json.substring(0, json.length - 1);
-    
-    // Parsear pares clave-valor
-    final regex = RegExp(r'"([^"]+)"\s*:\s*(?:"([^"]*)"|(\d+)|null)');
-    for (final match in regex.allMatches(json)) {
-      final key = match.group(1);
-      final stringValue = match.group(2);
-      final numberValue = match.group(3);
-      
-      if (key != null) {
-        if (stringValue != null) {
-          result[key] = stringValue;
-        } else if (numberValue != null) {
-          result[key] = int.tryParse(numberValue) ?? numberValue;
-        }
-      }
-    }
-    
-    return result;
+    return null;
   }
 
   /// Detectar GPU en Linux
@@ -478,85 +445,41 @@ class HardwareDetectorService {
   }
 
   /// Generar recomendaciones de modelos basadas en hardware
-  static List<String> _generateRecommendations({
+  static List<String> recommendedModelsForHardware({
     required bool hasGPU,
     required int? gpuVRAM,
     required int systemRAM,
   }) {
     final recommendations = <String>[];
 
-    if (hasGPU && gpuVRAM != null) {
-      if (gpuVRAM >= 24) {
-        // RTX 4090, 3090 Ti - modelos grandes
-        recommendations.addAll([
-          'llama3.1:405b',
-          'mixtral:8x7b',
-          'llama3.1:70b',
-          'codellama:34b',
-        ]);
-      } else if (gpuVRAM >= 16) {
-        // RTX 4080, 4070 Ti - modelos medianos-grandes
-        recommendations.addAll([
-          'llama3.1:70b',
-          'mixtral:8x7b',
-          'codellama:34b',
-          'deepseek-coder:33b',
-        ]);
-      } else if (gpuVRAM >= 12) {
-        // RTX 4070, 3090 - modelos medianos
-        recommendations.addAll([
-          'llama3.1:8b',
-          'qwen2.5:7b',
-          'mistral:7b',
-          'codellama:13b',
-        ]);
-      } else if (gpuVRAM >= 8) {
-        // RTX 3060, 3070, 4060 - modelos pequeños-medianos
-        recommendations.addAll([
-          'llama3.2:3b',
-          'phi3:mini',
-          'qwen2.5:3b',
-          'gemma2:2b',
-          'llava:7b',
-        ]);
-      } else if (gpuVRAM >= 6) {
-        // RTX 3050, GTX 1660 - modelos pequeños
-        recommendations.addAll([
-          'llama3.2:1b',
-          'tinyllama:1.1b',
-          'phi3:mini',
-          'qwen2.5:0.5b',
-        ]);
-      } else {
-        // GPU con poca VRAM
-        recommendations.addAll([
-          'tinyllama:1.1b',
-          'phi3:mini',
-          'qwen2.5:0.5b',
-        ]);
-      }
+    final memoryBudgetGb = hasGPU && gpuVRAM != null
+        ? (gpuVRAM < systemRAM - 4 ? gpuVRAM : systemRAM - 4)
+        : systemRAM - 4;
+
+    if (memoryBudgetGb >= 20) {
+      recommendations.addAll([
+        'qwen2.5:14b',
+        'llama3.1:8b',
+        'mistral:7b',
+      ]);
+    } else if (memoryBudgetGb >= 12) {
+      recommendations.addAll([
+        'llama3.1:8b',
+        'qwen2.5:7b',
+        'mistral:7b',
+      ]);
+    } else if (memoryBudgetGb >= 6) {
+      recommendations.addAll([
+        'llama3.2:3b',
+        'phi3:mini',
+        'qwen2.5:3b',
+      ]);
     } else {
-      // Sin GPU, usar CPU
-      if (systemRAM >= 32) {
-        recommendations.addAll([
-          'llama3.1:8b',
-          'qwen2.5:7b',
-          'mistral:7b',
-        ]);
-      } else if (systemRAM >= 16) {
-        recommendations.addAll([
-          'llama3.2:3b',
-          'phi3:mini',
-          'qwen2.5:3b',
-          'gemma2:2b',
-        ]);
-      } else {
-        recommendations.addAll([
-          'tinyllama:1.1b',
-          'phi3:mini',
-          'qwen2.5:0.5b',
-        ]);
-      }
+      recommendations.addAll([
+        'llama3.2:1b',
+        'tinyllama:1.1b',
+        'qwen2.5:0.5b',
+      ]);
     }
 
     return recommendations;

@@ -8,31 +8,28 @@ dependencies:
   flutter:
     sdk: flutter
   
-  # UI
-  cupertino_icons: ^1.0.5
-  flutter_animate: ^4.3.0
-  
   # Estado
   provider: ^6.0.5
   
   # HTTP y API
+  html: ^0.15.6
   http: ^1.1.2
-  dio: ^5.4.0
   
   # Almacenamiento
   shared_preferences: ^2.2.2
-  path_provider: ^2.1.1
+
+  # Documentos (arrastrar y soltar, selector de archivos, PDF, Excel)
+  desktop_drop: ^0.8.4
+  file_selector: ^1.0.3
+  syncfusion_flutter_pdf: ^30.2.5
+  archive: ^4.0.7
+  xml: ^6.6.1
   
   # Imágenes
   image_picker: ^1.0.4
-  image: ^4.1.0
   
   # Ventana
   window_manager: ^0.3.7
-  
-  # Utilidades
-  path: ^1.8.3
-  uuid: ^4.2.1
   
   # Hardware
   system_info2: ^4.0.0

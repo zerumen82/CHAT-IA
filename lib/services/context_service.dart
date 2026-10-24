@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:isolate';
+
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/message.dart';
-import '../models/chat_message.dart';
 
 /// Servicio para gestión de contexto conversacional
 /// Simplificado para chat general (sin programación)
@@ -12,465 +14,700 @@ class ContextService {
   static const String _userLanguageKey = 'user_language';
   static const String _preferredModelKey = 'preferred_model';
   static const String _ollamaServerKey = 'ollama_server_url';
-  static const int _maxContextMessages = 20;
   static const int _maxHistoryMessages = 100;
 
   /// Timer para debounce de guardado de mensajes (evita escrituras frecuentes en disco)
   static Timer? _saveMessagesDebounceTimer;
 
-  /// Detectar idioma automáticamente - VERSIÓN MEJORADA
-  /// Ahora con soporte para 8 idiomas y mejor precisión
+  /// Palabras completas y frecuentes de cada idioma.
+  ///
+  /// Se comparan como palabras enteras (nunca como subcadenas) para no
+  /// confundir, por ejemplo, "mission" con el español "mi" o "difference"
+  /// con el francés "ce". El orden importa: en caso de empate gana el primero,
+  /// y el español es el idioma por defecto del producto.
+  static final Map<String, Set<String>> _languageWords = {
+    'español': {
+      'el',
+      'la',
+      'los',
+      'las',
+      'un',
+      'una',
+      'unos',
+      'unas',
+      'de',
+      'del',
+      'al',
+      'que',
+      'qué',
+      'y',
+      'o',
+      'en',
+      'es',
+      'son',
+      'está',
+      'están',
+      'estoy',
+      'estás',
+      'era',
+      'fue',
+      'por',
+      'para',
+      'con',
+      'sin',
+      'sobre',
+      'entre',
+      'desde',
+      'hasta',
+      'se',
+      'le',
+      'les',
+      'lo',
+      'su',
+      'sus',
+      'mi',
+      'mis',
+      'tu',
+      'tus',
+      'no',
+      'sí',
+      'si',
+      'como',
+      'más',
+      'pero',
+      'porque',
+      'cuando',
+      'dónde',
+      'donde',
+      'muy',
+      'este',
+      'esta',
+      'esto',
+      'estos',
+      'estas',
+      'ese',
+      'esa',
+      'eso',
+      'yo',
+      'tú',
+      'él',
+      'ella',
+      'nosotros',
+      'usted',
+      'ellos',
+      'ellas',
+      'hay',
+      'he',
+      'has',
+      'ha',
+      'han',
+      'puedo',
+      'puedes',
+      'puede',
+      'quiero',
+      'quieres',
+      'dime',
+      'dame',
+      'cuánto',
+      'cuántos',
+      'cuál',
+      'cómo',
+      'quién',
+      'necesito',
+      'gracias',
+      'hola',
+      'buenos',
+      'días',
+      'tardes',
+      'noches',
+      'resumen',
+      'analiza',
+      'analizar',
+      'documento',
+      'documentos',
+      'hoja',
+      'datos',
+      'archivo',
+      'tabla',
+      'ventas',
+      'total',
+      'suma',
+      'compara',
+      'explica',
+      'responde',
+      'según',
+      'hace',
+      'hacer',
+      'tengo',
+      'tiene',
+      'bastante',
+      'también',
+      'solo',
+    },
+    'english': {
+      'the',
+      'of',
+      'and',
+      'is',
+      'are',
+      'was',
+      'were',
+      'to',
+      'in',
+      'on',
+      'at',
+      'for',
+      'with',
+      'without',
+      'about',
+      'between',
+      'from',
+      'this',
+      'that',
+      'these',
+      'those',
+      'it',
+      'its',
+      'you',
+      'we',
+      'they',
+      'he',
+      'she',
+      'my',
+      'your',
+      'our',
+      'their',
+      'not',
+      'no',
+      'yes',
+      'but',
+      'very',
+      'more',
+      'can',
+      'could',
+      'would',
+      'should',
+      'do',
+      'does',
+      'did',
+      'have',
+      'has',
+      'had',
+      'what',
+      'how',
+      'when',
+      'where',
+      'why',
+      'which',
+      'who',
+      'me',
+      'please',
+      'thanks',
+      'thank',
+      'help',
+      'need',
+      'want',
+      'give',
+      'show',
+      'summarize',
+      'summarise',
+      'analyze',
+      'analyse',
+      'document',
+      'file',
+      'sheet',
+      'data',
+      'table',
+      'total',
+      'compare',
+      'explain',
+      'according',
+      'tell',
+      'read',
+      'extract',
+      'row',
+      'rows',
+      'column',
+      'value',
+      'values',
+    },
+    'português': {
+      'o',
+      'os',
+      'as',
+      'um',
+      'uma',
+      'uns',
+      'umas',
+      'do',
+      'da',
+      'dos',
+      'das',
+      'ao',
+      'no',
+      'na',
+      'nos',
+      'nas',
+      'que',
+      'e',
+      'é',
+      'em',
+      'para',
+      'por',
+      'com',
+      'sem',
+      'sobre',
+      'entre',
+      'não',
+      'sim',
+      'mais',
+      'mas',
+      'muito',
+      'este',
+      'esta',
+      'isto',
+      'esse',
+      'essa',
+      'isso',
+      'eu',
+      'você',
+      'vocês',
+      'ele',
+      'ela',
+      'nós',
+      'eles',
+      'elas',
+      'sou',
+      'são',
+      'está',
+      'estão',
+      'tenho',
+      'tem',
+      'pode',
+      'posso',
+      'quero',
+      'preciso',
+      'obrigado',
+      'obrigada',
+      'olá',
+      'bom',
+      'boa',
+      'dia',
+      'tarde',
+      'noite',
+      'como',
+      'onde',
+      'quando',
+      'qual',
+      'quanto',
+      'resumo',
+      'planilha',
+      'dados',
+      'arquivo',
+      'tabela',
+      'vendas',
+      'total',
+      'soma',
+      'compara',
+      'explique',
+      'segundo',
+    },
+    'français': {
+      'le',
+      'les',
+      'des',
+      'du',
+      'au',
+      'aux',
+      'qui',
+      'et',
+      'est',
+      'sont',
+      'pour',
+      'par',
+      'avec',
+      'sans',
+      'sur',
+      'entre',
+      'ne',
+      'pas',
+      'plus',
+      'mais',
+      'très',
+      'ce',
+      'cette',
+      'ces',
+      'je',
+      'tu',
+      'vous',
+      'nous',
+      'ils',
+      'elles',
+      'mon',
+      'ton',
+      'son',
+      'notre',
+      'votre',
+      'leur',
+      'ai',
+      'as',
+      'avons',
+      'avez',
+      'ont',
+      'suis',
+      'sommes',
+      'êtes',
+      'besoin',
+      'merci',
+      'bonjour',
+      'bonsoir',
+      'comment',
+      'où',
+      'quand',
+      'quel',
+      'quelle',
+      'combien',
+      'résumé',
+      'document',
+      'feuille',
+      'données',
+      'fichier',
+      'tableau',
+      'ventes',
+      'total',
+      'somme',
+      'compare',
+      'explique',
+      'selon',
+      'fichiers',
+      'ligne',
+      'lignes',
+    },
+    'italiano': {
+      'il',
+      'lo',
+      'gli',
+      'di',
+      'del',
+      'della',
+      'dei',
+      'degli',
+      'delle',
+      'alla',
+      'che',
+      'e',
+      'è',
+      'per',
+      'con',
+      'senza',
+      'su',
+      'tra',
+      'non',
+      'sì',
+      'più',
+      'ma',
+      'molto',
+      'questo',
+      'questa',
+      'questi',
+      'queste',
+      'io',
+      'noi',
+      'voi',
+      'loro',
+      'sono',
+      'sei',
+      'siamo',
+      'siete',
+      'ho',
+      'hai',
+      'ha',
+      'abbiamo',
+      'avete',
+      'hanno',
+      'posso',
+      'vuoi',
+      'voglio',
+      'bisogno',
+      'grazie',
+      'ciao',
+      'buongiorno',
+      'come',
+      'dove',
+      'quando',
+      'quale',
+      'quanto',
+      'riassunto',
+      'documento',
+      'foglio',
+      'dati',
+      'file',
+      'tabella',
+      'vendite',
+      'totale',
+      'somma',
+      'confronta',
+      'spiega',
+      'secondo',
+    },
+    'deutsch': {
+      'der',
+      'die',
+      'das',
+      'den',
+      'dem',
+      'des',
+      'ein',
+      'eine',
+      'einen',
+      'einem',
+      'einer',
+      'und',
+      'ist',
+      'sind',
+      'war',
+      'waren',
+      'zu',
+      'mit',
+      'für',
+      'von',
+      'auf',
+      'aus',
+      'bei',
+      'nicht',
+      'nein',
+      'ja',
+      'aber',
+      'sehr',
+      'mehr',
+      'ich',
+      'du',
+      'sie',
+      'wir',
+      'ihr',
+      'mein',
+      'dein',
+      'unser',
+      'brauche',
+      'bitte',
+      'danke',
+      'hallo',
+      'wie',
+      'was',
+      'wann',
+      'wo',
+      'warum',
+      'welche',
+      'welcher',
+      'hilf',
+      'hilfe',
+      'zusammenfassen',
+      'dokument',
+      'tabelle',
+      'datei',
+      'daten',
+      'blatt',
+      'verkäufe',
+      'summe',
+      'vergleiche',
+      'erkläre',
+      'zeile',
+      'zeilen',
+    },
+    'català': {
+      'els',
+      'les',
+      'uns',
+      'unes',
+      'dels',
+      'als',
+      'i',
+      'és',
+      'en',
+      'amb',
+      'sense',
+      'sobre',
+      'entre',
+      'no',
+      'sí',
+      'més',
+      'però',
+      'molt',
+      'aquest',
+      'aquesta',
+      'aquests',
+      'jo',
+      'vostè',
+      'nosaltres',
+      'ells',
+      'elles',
+      'sóc',
+      'són',
+      'està',
+      'estan',
+      'tinc',
+      'té',
+      'puc',
+      'vull',
+      'necessito',
+      'gràcies',
+      'hola',
+      'bon',
+      'bona',
+      'dia',
+      'tarda',
+      'nit',
+      'com',
+      'on',
+      'quan',
+      'quin',
+      'quant',
+      'resum',
+      'full',
+      'dades',
+      'fitxer',
+      'taula',
+      'vendes',
+      'total',
+      'suma',
+      'compara',
+      'explica',
+      'segons',
+    },
+    'galego': {
+      'unha',
+      'do',
+      'da',
+      'dos',
+      'das',
+      'ao',
+      'no',
+      'na',
+      'nos',
+      'nas',
+      'que',
+      'e',
+      'é',
+      'en',
+      'para',
+      'por',
+      'con',
+      'sen',
+      'sobre',
+      'entre',
+      'non',
+      'si',
+      'máis',
+      'pero',
+      'moi',
+      'este',
+      'esta',
+      'iso',
+      'eu',
+      'ti',
+      'vostede',
+      'somos',
+      'está',
+      'están',
+      'teño',
+      'ten',
+      'podo',
+      'preciso',
+      'facer',
+      'grazas',
+      'ola',
+      'onde',
+      'cando',
+      'cal',
+      'canto',
+      'resumo',
+      'folla',
+      'datos',
+      'ficheiro',
+      'táboa',
+      'vendas',
+      'total',
+      'suma',
+      'explica',
+      'segundo',
+    },
+  };
+
+  /// Palabras de 1–3 letras que aparecen en varios idiomas y solo añaden ruido.
+  static const Set<String> _ambiguousShortWords = {'a', 'e', 'o', 'i', 'y'};
+
+  static final RegExp _wordPattern = RegExp(r"[\p{L}\p{M}]+", unicode: true);
+
+  /// Detectar idioma comparando palabras completas.
   static String detectLanguage(String text) {
-    if (text.isEmpty) return 'español';
+    if (text.trim().isEmpty) return 'español';
 
-    final lowerText = text.toLowerCase();
+    final tokens = _wordPattern
+        .allMatches(text.toLowerCase())
+        .map((match) => match.group(0)!)
+        .where((token) => !_ambiguousShortWords.contains(token))
+        .toList();
+    if (tokens.isEmpty) return 'español';
 
-    // Palabras clave por idioma (expansionadas)
-    final Map<String, List<String>> languageKeywords = {
-      // Español - España y Latinoamérica
-      'español': [
-        'hola', 'buenos', 'buenas', 'días', 'tardes', 'noches',
-        'gracias', 'por favor', 'ayuda', 'necesito', 'quiero', 'puedes',
-        'cómo', 'qué', 'cuándo', 'dónde', 'por qué', 'quién',
-        'está', 'eres', 'tengo', 'hacer', 'hace', 'hacer', 'hecho',
-        'muy', 'bien', 'mal', 'grande', 'pequeño', 'nuevo', 'viejo',
-        'hoy', 'ayer', 'mañana', 'ahora', 'después', 'antes',
-        'si', 'no', 'pero', 'porque', 'cuando', 'donde',
-        'con', 'para', 'sin', 'sobre', 'entre', 'hasta', 'desde',
-        'este', 'esta', 'esto', 'estos', 'estas', 'ese', 'esa', 'eso',
-        'ese', 'esa', 'eso', 'aquel', 'aquella', 'aquello',
-        'mi', 'tu', 'su', 'mis', 'tus', 'sus', 'nuestro', 'nuestra',
-        'yo', 'tú', 'él', 'ella', 'usted', 'nosotros', 'ellos', 'ellas',
-        'tengo', 'tienes', 'tiene', 'tenemos', 'tienen',
-        'estoy', 'estás', 'está', 'estamos', 'están',
-        'he', 'has', 'ha', 'hemos', 'han',
-        'ser', 'estar', 'tener', 'hacer', 'ir', 'ver', 'dar', 'saber',
-        'puedo', 'puedes', 'puede', 'podemos', 'pueden',
-        'quiero', 'quieres', 'quiere', 'queremos', 'quieren',
-        'debe', 'deben', 'debería', 'deberían',
-        'comenzar', 'empezar', 'terminar', 'finalizar', 'continuar',
-        'hablar', 'escribir', 'leer', 'escuchar', 'mirar',
-        'entender', 'comprender', 'saber', 'conocer',
-        'pensar', 'creer', 'opinion', 'parecer', 'sentir',
-        'trabajar', 'estudiar', 'aprender', 'enseñar',
-        'casa', 'familia', 'amigo', 'tiempo', 'día', 'semana', 'mes', 'año',
-        'dinero', 'trabajo', 'vida', 'mundo', 'gente', 'personas',
-        'problema', 'solución', 'pregunta', 'respuesta', 'información',
-        'me', 'te', 'se', 'nos', 'le', 'les', 'lo', 'la', 'los', 'las',
-        'me', 'te', 'le', 'nos', 'os',
-        'algo', 'alguien', 'algún', 'alguno', 'alguna', 'nada', 'nadie',
-        'todo', 'todos', 'toda', 'todas', 'cada',
-        'más', 'menos', 'mucho', 'poco', 'bastante', 'demasiado',
-        'aquí', 'allí', 'ahí', 'ahora', 'antes', 'después', 'luego',
-        'solo', 'solamente', 'solo', 'únicamente', 'también', 'tampoco',
-        'tal vez', 'quizá', 'puede ser', 'probablemente', 'ciertamente',
-        'ciertamente', 'definitivamente', 'exactamente', 'precisamente',
-        'hola', 'adiós', 'bueno', 'vale', 'ok', 'entendido',
-        'mientras', 'aunque', 'sin embargo', 'no obstante',
-        'además', 'también', 'tampoco', 'ni', 'tampoco',
-        'español', 'castellano', 'latinoamericano',
-      ],
-      // Inglés
-      'english': [
-        'hello', 'hi', 'hey', 'good', 'morning', 'afternoon', 'evening', 'night',
-        'thanks', 'thank', 'please', 'help', 'need', 'want', 'can', 'could',
-        'how', 'what', 'when', 'where', 'why', 'who', 'which',
-        'is', 'are', 'was', 'were', 'be', 'been', 'being',
-        'have', 'has', 'had', 'do', 'does', 'did', 'doing',
-        'will', 'would', 'should', 'could', 'may', 'might', 'must',
-        'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them',
-        'my', 'your', 'his', 'her', 'its', 'our', 'their',
-        'this', 'that', 'these', 'those',
-        'am', 'is', 'are', 'was', 'were', 'been', 'being',
-        'have', 'has', 'had', 'having',
-        'do', 'does', 'did', 'doing',
-        'make', 'made', 'get', 'got', 'go', 'went', 'gone', 'come', 'came',
-        'see', 'saw', 'seen', 'know', 'knew', 'known', 'think', 'thought',
-        'say', 'said', 'tell', 'told', 'ask', 'asked', 'answer', 'answered',
-        'work', 'working', 'study', 'study', 'learn', 'learned', 'teach', 'taught',
-        'read', 'write', 'speak', 'spoke', 'talk', 'listen', 'hear',
-        'understand', 'understood', 'feel', 'felt', 'believe', 'believed',
-        'want', 'wish', 'hope', 'like', 'love', 'hate',
-        'good', 'bad', 'big', 'small', 'new', 'old', 'young', 'great',
-        'very', 'really', 'much', 'many', 'some', 'any', 'all', 'most',
-        'not', 'no', 'yes', 'ok', 'okay', 'sure', 'certainly',
-        'maybe', 'perhaps', 'probably', 'actually', 'basically',
-        'just', 'only', 'also', 'too', 'even', 'still', 'already',
-        'here', 'there', 'where', 'when', 'how', 'why',
-        'time', 'day', 'week', 'month', 'year', 'today', 'yesterday', 'tomorrow',
-        'life', 'world', 'people', 'person', 'thing', 'way', 'day',
-        'money', 'job', 'work', 'home', 'family', 'friend',
-        'problem', 'question', 'answer', 'idea', 'part', 'place', 'case',
-        'week', 'year', 'point', 'fact', 'matter', 'sort', 'kind',
-        'english', 'british', 'american', 'australian',
-      ],
-      // Portugués - Brasil y Portugal
-      'português': [
-        'olá', 'oi', 'bom', 'boa', 'dia', 'tarde', 'noite',
-        'obrigado', 'obrigada', 'por favor', 'ajuda', 'preciso', 'quero',
-        'como', 'o que', 'quando', 'onde', 'por que', 'quem', 'qual',
-        'sou', 'és', 'é', 'somos', 'são', 'era', 'eram', 'ser', 'estar',
-        'tenho', 'tens', 'tem', 'temos', 'têm', 'tinha', 'tinham',
-        'fazer', 'fez', 'faço', 'vou', 'fui', 'foi', 'ir', 'era',
-        'eu', 'tu', 'ele', 'ela', 'nós', 'vós', 'eles', 'elas',
-        'me', 'te', 'se', 'nos', 'vos', 'lhe', 'lhes',
-        'meu', 'teu', 'seu', 'nosso', 'vosso', 'seus', 'suas',
-        'este', 'esta', 'isto', 'esses', 'essas', 'aquele', 'aquela', 'aquilo',
-        'está', 'estão', 'estava', 'estavam', 'estando',
-        'há', 'havia', 'ter', 'tinha', 'têm', 'tem',
-        'poder', 'posso', 'podes', 'pode', 'podemos', 'podem', 'poderia',
-        'querer', 'quero', 'quer', 'querem', 'queria',
-        'dever', 'deve', 'devem', 'deveria', 'deveriam',
-        'falar', 'dizer', 'escrever', 'ler', 'ouvir', 'ver',
-        'entender', 'compreender', 'saber', 'conhecer',
-        'pensar', 'acreditar', 'sentir', 'parecer',
-        'trabalhar', 'estudar', 'aprender', 'ensinar',
-        'casa', 'família', 'amigo', 'tempo', 'dia', 'semana', 'mês', 'ano',
-        'dinheiro', 'trabalho', 'vida', 'mundo', 'gente', 'pessoa',
-        'problema', 'solução', 'pergunta', 'resposta', 'informação',
-        'muito', 'pouco', 'bastante', 'demais', 'mais', 'menos',
-        'sim', 'não', 'talvez', 'provavelmente', 'certamente',
-        'aqui', 'ali', 'lá', 'agora', 'depois', 'antes', 'então',
-        'só', 'somente', 'apenas', 'também', 'tampouco',
-        'português', 'brasileiro', 'português',
-      ],
-      // Francés
-      'français': [
-        'bonjour', 'bonsoir', 'bonne', 'matin', 'apres', 'nuit',
-        'merci', 's\'il vous plaît', 'aide', 'besoin', 'vouloir', 'pouvoir',
-        'comment', 'quoi', 'quand', 'où', 'pourquoi', 'qui', 'quel',
-        'je', 'tu', 'il', 'elle', 'nous', 'vous', 'ils', 'elles',
-        'me', 'te', 'se', 'nous', 'vous', 'leur', 'lui',
-        'mon', 'ton', 'son', 'notre', 'votre', 'leur', 'mes', 'tes', 'ses',
-        'ce', 'cet', 'cette', 'ces', 'ça', 'celui', 'celle', 'ceux', 'celles',
-        'être', 'suis', 'es', 'est', 'sommes', 'êtes', 'sont', 'étais',
-        'avoir', 'ai', 'as', 'a', 'avons', 'avez', 'ont', 'avais',
-        'faire', 'fais', 'fait', 'faisons', 'font', 'faisait',
-        'aller', 'vais', 'vas', 'va', 'allons', 'allez', 'vont',
-        'voir', 'vois', 'voit', 'voyons', 'voyez', 'voient',
-        'savoir', 'sais', 'sait', 'savez', 'savent', 'savais',
-        'penser', 'croire', 'sentir', 'paraître',
-        'parler', 'dire', 'écrire', 'lire', 'écouter',
-        'comprendre', 'entendre', 'connaître',
-        'travailler', 'étudier', 'apprendre', 'enseign',
-        'maison', 'famille', 'ami', 'temps', 'jour', 'semaine', 'mois', 'année',
-        'argent', 'travail', 'vie', 'monde', 'gens', 'personne',
-        'problème', 'solution', 'question', 'réponse', 'information',
-        'très', 'bien', 'mal', 'grand', 'petit', 'nouveau', 'vieux',
-        'oui', 'non', 'peut-être', 'probablement', 'certainement',
-        'ici', 'là', 'ailleurs', 'maintenant', 'après', 'avant',
-        'seulement', 'aussi', 'encore', 'déjà',
-        'français', 'française',
-      ],
-      // Italiano
-      'italiano': [
-        'ciao', 'buongiorno', 'buonasera', 'buonanotte', 'buon',
-        'grazie', 'per favore', 'aiuto', 'bisogno', 'volere', 'potere',
-        'come', 'cosa', 'quando', 'dove', 'perché', 'chi', 'quale',
-        'io', 'tu', 'lui', 'lei', 'noi', 'voi', 'loro',
-        'mi', 'ti', 'si', 'ci', 'vi', 'gli', 'le',
-        'mio', 'tuo', 'suo', 'nostro', 'vostro', 'miei', 'tue', 'sue',
-        'questo', 'quello', 'questa', 'quella', 'questi', 'quelle',
-        'essere', 'sono', 'sei', 'è', 'siamo', 'siete', 'sono', 'ero',
-        'avere', 'ho', 'hai', 'ha', 'abbiamo', 'avete', 'hanno', 'avevo',
-        'fare', 'faccio', 'fai', 'fa', 'facciamo', 'fanno', 'facevo',
-        'andare', 'vado', 'vai', 'va', 'andiamo', 'vanno', 'andavo',
-        'vedere', 'vedo', 'vedi', 'vede', 'vediamo', 'vedono', 'vedevo',
-        'sapere', 'so', 'sai', 'sa', 'sappiamo', 'sanno', 'sapevo',
-        'parlare', 'dire', 'scrivere', 'leggere', 'ascoltare',
-        'capire', 'comprendere', 'conoscere',
-        'pensare', 'credere', 'sentire', 'parere',
-        'lavorare', 'studiare', 'imparare', 'insegnare',
-        'casa', 'famiglia', 'amico', 'tempo', 'giorno', 'settimana', 'mese', 'anno',
-        'soldi', 'lavoro', 'vita', 'mondo', 'gente', 'persona',
-        'problema', 'soluzione', 'domanda', 'risposta', 'informazione',
-        'molto', 'bene', 'male', 'grande', 'piccolo', 'nuovo', 'vecchio',
-        'sì', 'no', 'forse', 'probabilmente', 'certamente',
-        'qui', 'là', 'ora', 'dopo', 'prima', 'allora',
-        'solo', 'anche', 'ancora', 'già',
-        'italiano', 'italiana',
-      ],
-      // Alemán
-      'deutsch': [
-        'hallo', 'guten', 'morgen', 'tag', 'abend', 'nacht',
-        'danke', 'bitte', 'hilfe', 'brauchen', 'wollen', 'können',
-        'wie', 'was', 'wann', 'warum', 'wo', 'wer', 'welcher',
-        'ich', 'du', 'er', 'sie', 'es', 'wir', 'ihr', 'mich', 'dich', 'sich',
-        'mein', 'dein', 'sein', 'ihr', 'unser', 'euer',
-        'dieser', 'jener', 'dies', 'das', 'diese', 'jenen',
-        'sein', 'bin', 'bist', 'ist', 'sind', 'seid', 'war', 'waren',
-        'haben', 'habe', 'habt', 'hat', 'hatte', 'hatten',
-        'machen', 'tun', 'gehen', 'kommen', 'sehen', 'wissen', 'kennen',
-        'denken', 'glauben', 'fühlen', 'scheinen',
-        'sprechen', 'sagen', 'schreiben', 'lesen', 'hören',
-        'verstehen', 'begreifen', 'kennen',
-        'arbeiten', 'studieren', 'lernen', 'lehren',
-        'haus', 'familie', 'freund', 'zeit', 'tag', 'woche', 'monat', 'jahr',
-        'geld', 'arbeit', 'leben', 'welt', 'leute', 'mensch',
-        'problem', 'lösung', 'frage', 'antwort', 'information',
-        'sehr', 'gut', 'schlecht', 'groß', 'klein', 'neu', 'alt',
-        'ja', 'nein', 'vielleicht', 'wahrscheinlich', 'sicher',
-        'hier', 'dort', 'jetzt', 'nach', 'vor', 'dann',
-        'nur', 'auch', 'noch', 'schon',
-        'deutsch', 'deutsche',
-      ],
-      // Catalán
-      'català': [
-        'hola', 'bon dia', 'bon vespre', 'bona nit',
-        'gràcies', 'si us plau', 'ajuda', 'necessito', 'vull', 'pots',
-        'com', 'què', 'quan', 'on', 'per què', 'qui', 'qual',
-        'estic', 'estàs', 'està', 'estem', 'esteu', 'estan', 'estava',
-        'tinc', 'tens', 'té', 'tenim', 'teniu', 'tenen', 'tenia',
-        'fer', 'faig', 'fas', 'fem', 'feu', 'fan', 'feia',
-        'anar', 'vaig', 'vas', 'vam', 'vau', 'van',
-        'veure', 'veig', 'veiem', 'veuen', 'veia',
-        'saber', 'sé', 'sabem', 'saben', 'sabia',
-        'parlar', 'dir', 'escriure', 'llegir', 'escoltar',
-        'entendre', 'comprendre', 'conèixer',
-        'pensar', 'creure', 'sentir', 'parèixer',
-        'treballar', 'estudiar', 'aprendre', 'ensenyar',
-        'casa', 'família', 'amic', 'temps', 'dia', 'setmana', 'mes', 'any',
-        'diners', 'feina', 'vida', 'món', 'gent', 'persona',
-        'problema', 'solució', 'pregunta', 'resposta', 'informació',
-        'molt', 'bé', 'mal', 'gran', 'petit', 'nou', 'vell',
-        'sí', 'no', 'potser', 'probablement', 'certament',
-        'aquí', 'allà', 'ara', 'després', 'abans', 'llavors',
-        'només', 'també', 'encara', 'ja',
-        'català', 'catalana',
-      ],
-      // Gallego
-      'galego': [
-        'ola', 'bos días', 'boa tarde', 'boa noite',
-        'grazas', 'por favor', 'axuda', 'necesito', 'quiero', 'podes',
-        'como', 'que', 'cando', 'onde', 'por que', 'quen', 'cal',
-        'son', 'es', 'somos', 'sodes', 'son', 'era',
-        'teño', 'tens', 'ten', 'temos', 'tedes', 'teñen', 'tiña',
-        'facer', 'fago', 'fas', 'facemos', 'facedes', 'fan', 'facía',
-        'ir', 'vou', 'vas', 'imos', 'ides', 'van',
-        'ver', 'vexo', 'vemos', 'ven', 'vía',
-        'saber', 'sei', 'sabemos', 'saben', 'sabía',
-        'falar', 'dic', 'escribir', 'ler', 'escutar',
-        'entender', 'comprender', 'coñecer',
-        'pensar', 'crer', 'sentir', 'parecer',
-        'traballar', 'estudar', 'aprender', 'ensinar',
-        'casa', 'familia', 'amigo', 'tempo', 'día', 'semana', 'mes', 'ano',
-        'diñeiro', 'traballo', 'vida', 'mundo', 'xente', 'persoa',
-        'problema', 'solución', 'pregunta', 'resposta', 'información',
-        'moito', 'ben', 'mal', 'grande', 'pequeno', 'novo', 'velho',
-        'si', 'non', 'quizais', 'probablemente', 'certamente',
-        'aquí', 'alí', 'agora', 'despois', 'antes', 'entón',
-        'só', 'tamén', 'aínda', 'xa',
-        'galego', 'galega',
-      ],
-    };
+    var detectedLanguage = 'español';
+    var bestScore = 0;
 
-    // Contar coincidencias por idioma
-    Map<String, int> languageScores = {};
-    
-    for (var entry in languageKeywords.entries) {
-      int score = 0;
-      for (var word in entry.value) {
-        if (lowerText.contains(word)) {
-          score++;
-          // Bonus por palabras más largas (más específicas)
-          if (word.length > 4) score += 1;
-          if (word.length > 8) score += 2;
-        }
+    for (final entry in _languageWords.entries) {
+      var score = 0;
+      for (final token in tokens) {
+        if (!entry.value.contains(token)) continue;
+        score += 1;
+        // Las palabras largas son más específicas del idioma.
+        if (token.length > 4) score += 1;
+        if (token.length > 8) score += 2;
       }
-      languageScores[entry.key] = score;
-    }
-
-    // Encontrar el idioma con mayor puntuación
-    String detectedLanguage = 'español'; // Por defecto
-    int maxScore = 0;
-    
-    for (var entry in languageScores.entries) {
-      if (entry.value > maxScore) {
-        maxScore = entry.value;
+      if (score > bestScore) {
+        bestScore = score;
         detectedLanguage = entry.key;
       }
     }
 
-    // Si no hay coincidencias claras, devolver español
-    if (maxScore < 2) {
-      return 'español';
-    }
-
-    return detectedLanguage;
+    return bestScore == 0 ? 'español' : detectedLanguage;
   }
 
-  /// Generar contexto inteligente para chat general
-  static String generateContext(List<Message> messages, String userLanguage) {
-    if (messages.isEmpty) return '';
-
-    final recentMessages = messages.length > _maxContextMessages
-        ? messages.sublist(messages.length - _maxContextMessages)
-        : messages;
-
-    final contextMessages =
-        recentMessages.where((msg) => !msg.isError).toList();
-
-    if (contextMessages.isEmpty) return '';
-
-    String context = 'CONTEXTO DE LA CONVERSACIÓN ANTERIOR:\n\n';
-
-    for (final msg in contextMessages) {
-      context += '${msg.isUser ? "Usuario" : "Asistente"}: ${msg.text}\n\n';
-    }
-
-    context += 'INSTRUCCIONES IMPORTANTES:\n';
-    context += '- Responde SIEMPRE en $userLanguage\n';
-    context += '- Mantén la coherencia con el contexto anterior\n';
-    context +=
-        '- Si el usuario cambia de tema, adapta tu respuesta apropiadamente\n';
-    context += '- Responde de manera natural y conversacional\n';
-    context += '- Sé amigable y útil en cada respuesta\n\n';
-
-    return context;
-  }
-
-  /// Generar contexto para ChatMessage (multimodal)
-  static String generateContextFromChatMessages(
-      List<ChatMessage> messages, String userLanguage) {
-    if (messages.isEmpty) return '';
-
-    final recentMessages = messages.length > _maxContextMessages
-        ? messages.sublist(messages.length - _maxContextMessages)
-        : messages;
-
-    String context = 'CONTEXTO DE LA CONVERSACIÓN ANTERIOR:\n\n';
-
-    for (final msg in recentMessages) {
-      context += '${msg.isUser ? "Usuario" : "Asistente"}: ${msg.text}\n\n';
-    }
-
-    context += 'INSTRUCCIONES IMPORTANTES:\n';
-    context += '- Responde SIEMPRE en $userLanguage\n';
-    context += '- Mantén la coherencia con el contexto anterior\n';
-    context += '- Responde de manera natural y conversacional\n\n';
-
-    return context;
-  }
-
-  /// Seleccionar modelo automáticamente basado en el contenido
-  /// Prioriza modelos uncensored
-  static String selectOptimalModel(
-      String text, List<String> availableModels, String userLanguage) {
-    if (availableModels.isEmpty) return '';
-
-    final lowerText = text.toLowerCase();
-
-    // Detectar tipo de consulta
-    bool isCreativeRequest = lowerText.contains('escribir') ||
-        lowerText.contains('crear') ||
-        lowerText.contains('historia') ||
-        lowerText.contains('poema') ||
-        lowerText.contains('cuento') ||
-        lowerText.contains('write') ||
-        lowerText.contains('create') ||
-        lowerText.contains('story');
-
-    bool isTechnicalRequest = lowerText.contains('técnico') ||
-        lowerText.contains('algoritmo') ||
-        lowerText.contains('matemática') ||
-        lowerText.contains('ciencia') ||
-        lowerText.contains('technical') ||
-        lowerText.contains('math');
-
-    bool isImageRequest = lowerText.contains('imagen') ||
-        lowerText.contains('foto') ||
-        lowerText.contains('ver') ||
-        lowerText.contains('image') ||
-        lowerText.contains('photo') ||
-        lowerText.contains('picture');
-
-    // Si hay solicitud de imagen, buscar modelo multimodal
-    if (isImageRequest) {
-      for (final model in availableModels) {
-        final lowerModel = model.toLowerCase();
-        if (lowerModel.contains('vision') ||
-            lowerModel.contains('vl') ||
-            lowerModel.contains('pixtral')) {
-          return model;
-        }
-      }
-    }
-
-    // Priorizar modelos uncensored (Dolphin, Nous-Hermes, WizardLM)
-    final uncensoredModels = [
-      'dolphin',
-      'openhermes',
-      'nous-hermes',
-      'wizardlm',
-      'wizard',
-      'uncensored',
-    ];
-
-    // Buscar modelo uncensored
-    for (final uncensored in uncensoredModels) {
-      for (final model in availableModels) {
-        if (model.toLowerCase().contains(uncensored)) {
-          // Para solicitudes creativas, preferir modelos más creativos
-          if (isCreativeRequest && model.toLowerCase().contains('mistral')) {
-            return model;
-          }
-          return model;
-        }
-      }
-    }
-
-    // Para solicitudes técnicas, preferir modelos más grandes
-    if (isTechnicalRequest) {
-      for (final model in availableModels) {
-        final lowerModel = model.toLowerCase();
-        if (lowerModel.contains('70b') ||
-            lowerModel.contains('mixtral') ||
-            lowerModel.contains('llama3')) {
-          return model;
-        }
-      }
-    }
-
-    // Preferir modelos en español si están disponibles
-    for (final model in availableModels) {
-      if (userLanguage == 'español' &&
-          model.toLowerCase().contains('spanish')) {
-        return model;
-      }
-    }
-
-    // Por defecto, usar el primer modelo disponible
-    return availableModels.first;
-  }
-
-  /// Guardar mensajes en almacenamiento local
+  /// Guardar mensajes en almacenamiento local.
+  ///
+  /// La codificación JSON se hace en un isolate aparte porque el historial
+  /// puede incluir el texto extraído de varios documentos (varios MB).
   static Future<void> saveMessages(List<Message> messages) async {
     try {
+      // Copia defensiva: el historial se muta mientras se genera la respuesta.
+      final messagesJson = List<Message>.of(messages)
+          .map((message) => message.toJson())
+          .toList();
+      final encoded = await Isolate.run(() => json.encode(messagesJson));
       final prefs = await SharedPreferences.getInstance();
-      final messagesJson = messages.map((msg) => msg.toJson()).toList();
-      await prefs.setString(_messagesKey, json.encode(messagesJson));
+      await prefs.setString(_messagesKey, encoded);
     } catch (e) {
       debugPrint('Error guardando mensajes: $e');
     }
   }
 
-  /// Guardar mensajes con debounce (300 ms) para evitar escrituras frecuentes en disco
-  static Future<void> saveMessagesDebounced(List<Message> messages) async {
+  /// Guardar mensajes con debounce para no escribir en disco en cada token.
+  static void saveMessagesDebounced(List<Message> messages) {
     _saveMessagesDebounceTimer?.cancel();
-    _saveMessagesDebounceTimer = Timer(const Duration(milliseconds: 300), () async {
+    _saveMessagesDebounceTimer =
+        Timer(const Duration(milliseconds: 400), () async {
       await saveMessages(messages);
     });
   }
 
-  /// Forzar escritura inmediata de mensajes pendientes (cancelar debounce)
+  /// Forzar escritura inmediata de mensajes pendientes (cancelar debounce).
   static Future<void> flushMessages(List<Message> messages) async {
     _saveMessagesDebounceTimer?.cancel();
+    _saveMessagesDebounceTimer = null;
     await saveMessages(messages);
   }
 
-  /// Cancelar cualquier guardado pendiente de debounce
+  /// Cancelar cualquier guardado pendiente de debounce.
   static void cancelPendingSave() {
     _saveMessagesDebounceTimer?.cancel();
+    _saveMessagesDebounceTimer = null;
   }
 
   /// Cargar mensajes desde almacenamiento local
@@ -485,34 +722,6 @@ class ContextService {
       }
     } catch (e) {
       debugPrint('Error cargando mensajes: $e');
-    }
-
-    return [];
-  }
-
-  /// Guardar ChatMessages (multimodal)
-  static Future<void> saveChatMessages(List<ChatMessage> messages) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final messagesJson = messages.map((msg) => msg.toJson()).toList();
-      await prefs.setString(_messagesKey, json.encode(messagesJson));
-    } catch (e) {
-      debugPrint('Error guardando chat messages: $e');
-    }
-  }
-
-  /// Cargar ChatMessages (multimodal)
-  static Future<List<ChatMessage>> loadChatMessages() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final messagesString = prefs.getString(_messagesKey);
-
-      if (messagesString != null) {
-        final List<dynamic> messagesJson = json.decode(messagesString);
-        return messagesJson.map((json) => ChatMessage.fromJson(json)).toList();
-      }
-    } catch (e) {
-      debugPrint('Error cargando chat messages: $e');
     }
 
     return [];
@@ -596,50 +805,6 @@ class ContextService {
         .toList();
 
     return [...importantOlderMessages, ...recentMessages];
-  }
-
-  /// Limpiar historial antiguo de ChatMessages
-  static List<ChatMessage> cleanOldChatHistory(List<ChatMessage> messages) {
-    if (messages.length <= _maxHistoryMessages) return messages;
-
-    const keepCount = _maxHistoryMessages ~/ 2;
-    final recentMessages = messages.sublist(messages.length - keepCount);
-    final olderMessages = messages.sublist(0, messages.length - keepCount);
-
-    // Mantener mensajes importantes de la parte antigua
-    final importantOlderMessages = olderMessages
-        .where((msg) => !msg.isError && msg.text.length > 20)
-        .take(keepCount)
-        .toList();
-
-    return [...importantOlderMessages, ...recentMessages];
-  }
-
-  /// Generar resumen del contexto para modelos con limitaciones
-  static String generateContextSummary(List<Message> messages) {
-    if (messages.length <= 5) return '';
-
-    final userMessages = messages.where((msg) => msg.isUser).toList();
-    String summary = 'RESUMEN DEL CONTEXTO:\n';
-    summary += '- Total de intercambios: ${userMessages.length}\n';
-    summary += '- Últimos temas discutidos: ';
-
-    if (userMessages.isNotEmpty) {
-      final lastTopics = userMessages.length > 3
-          ? userMessages.sublist(userMessages.length - 3)
-          : userMessages;
-      final topicsText = lastTopics
-          .map((msg) => msg.text.length > 50
-              ? '${msg.text.substring(0, 50)}...'
-              : msg.text)
-          .join(', ');
-      summary += topicsText;
-    }
-
-    summary +=
-        '\n- El usuario prefiere respuestas en: ${detectLanguage(messages.isNotEmpty ? messages.last.text : '')}\n';
-
-    return summary;
   }
 
   /// Limpiar todos los datos almacenados

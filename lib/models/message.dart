@@ -1,4 +1,6 @@
-/// Modelo de mensaje con soporte multimodal (texto + imágenes)
+import 'document_attachment.dart';
+
+/// Modelo de mensaje con soporte multimodal (texto + imágenes + documentos)
 class Message {
   final String text;
   final bool isUser;
@@ -12,6 +14,10 @@ class Message {
   final List<MessageImage>? images;
   final bool hasImages;
 
+  // Soporte para documentos adjuntos (PDF, Excel, texto)
+  final List<DocumentAttachment>? documents;
+  final bool hasDocuments;
+
   Message({
     required this.text,
     required this.isUser,
@@ -21,7 +27,9 @@ class Message {
     this.metadata,
     this.tokenCount,
     this.images,
-  }) : hasImages = images != null && images.isNotEmpty;
+    this.documents,
+  })  : hasImages = images != null && images.isNotEmpty,
+        hasDocuments = documents != null && documents.isNotEmpty;
 
   /// Crear mensaje de solo texto
   factory Message.text({
@@ -73,6 +81,7 @@ class Message {
       'metadata': metadata,
       'tokenCount': tokenCount,
       'images': images?.map((i) => i.toJson()).toList(),
+      'documents': documents?.map((d) => d.toJson()).toList(),
     };
   }
 
@@ -81,6 +90,13 @@ class Message {
     if (json['images'] != null) {
       imagesList = (json['images'] as List)
           .map((i) => MessageImage.fromJson(i as Map<String, dynamic>))
+          .toList();
+    }
+
+    List<DocumentAttachment>? documentsList;
+    if (json['documents'] != null) {
+      documentsList = (json['documents'] as List)
+          .map((d) => DocumentAttachment.fromJson(d as Map<String, dynamic>))
           .toList();
     }
 
@@ -93,6 +109,7 @@ class Message {
       metadata: json['metadata'],
       tokenCount: json['tokenCount'],
       images: imagesList,
+      documents: documentsList,
     );
   }
 
@@ -106,6 +123,7 @@ class Message {
     Map<String, dynamic>? metadata,
     int? tokenCount,
     List<MessageImage>? images,
+    List<DocumentAttachment>? documents,
   }) {
     return Message(
       text: text ?? this.text,
@@ -116,13 +134,15 @@ class Message {
       metadata: metadata ?? this.metadata,
       tokenCount: tokenCount ?? this.tokenCount,
       images: images ?? this.images,
+      documents: documents ?? this.documents,
     );
   }
 
   @override
   String toString() {
     return 'Message(text: ${text.length > 50 ? '${text.substring(0, 50)}...' : text}, '
-        'isUser: $isUser, hasImages: $hasImages, timestamp: $timestamp)';
+        'isUser: $isUser, hasImages: $hasImages, '
+        'hasDocuments: $hasDocuments, timestamp: $timestamp)';
   }
 }
 

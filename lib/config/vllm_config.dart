@@ -12,14 +12,23 @@ class OllamaConfig {
   /// Timeout para carga de modelos (en segundos)
   static const int modelLoadTimeoutSeconds = 300;
 
-  /// Máximo de tokens en contexto
-  static const int maxContextTokens = 4096;
+  /// Máximo de tokens en contexto.
+  ///
+  /// Se usa siempre el mismo valor (también sin documentos) porque Ollama
+  /// recarga el modelo cuando cambia `num_ctx`, lo que cuesta varios segundos.
+  static const int maxContextTokens = 8192;
+
+  /// Alias histórico del contexto ampliado para documentos.
+  static const int documentContextTokens = maxContextTokens;
 
   /// Máximo de tokens en respuesta
   static const int maxResponseTokens = 2048;
 
   /// Temperatura por defecto
   static const double defaultTemperature = 0.7;
+
+  /// Temperatura para preguntas sobre documentos: menos inventiva, más exacta.
+  static const double documentTemperature = 0.2;
 
   /// Top-p por defecto
   static const double defaultTopP = 0.9;
@@ -82,6 +91,26 @@ class OllamaConfig {
         name.contains('vision') ||
         name.contains('llava') ||
         name.contains('vl');
+  }
+
+  /// Verificar si el modelo es una variante sin censura (abliterated,
+  /// uncensored o Dolphin).
+  static bool isUncensoredModel(String modelName) {
+    final name = modelName.toLowerCase();
+    return name.contains('uncensored') ||
+        name.contains('abliterated') ||
+        name.contains('abliterate') ||
+        name.contains('dolphin');
+  }
+
+  /// Modelos que razonan antes de responder. Se les envía `think: false`
+  /// para que no gasten el presupuesto de tokens pensando y devuelvan vacío.
+  static bool isThinkingModel(String modelName) {
+    final name = modelName.toLowerCase();
+    return name.contains('qwen3') ||
+        name.contains('deepseek-r1') ||
+        name.contains('reasoner') ||
+        name.contains('thinking');
   }
 
   /// Verificar si es un modelo de código

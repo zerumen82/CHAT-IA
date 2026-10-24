@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:lightchat/models/document_attachment.dart';
 import 'package:lightchat/models/message.dart';
 
 /// Burbuja de mensaje unificada: texto + imágenes + acciones
@@ -23,19 +23,19 @@ class MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final isUser = message.isUser;
     final colorScheme = Theme.of(context).colorScheme;
-    final maxWidth = MediaQuery.of(context).size.width * 0.75;
+    final maxWidth = MediaQuery.of(context).size.width * 0.78;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Row(
-        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment:
+            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isUser) ...[
             _buildAssistantAvatar(context),
             const SizedBox(width: 8),
           ],
-
           Flexible(
             child: RepaintBoundary(
               child: Column(
@@ -45,20 +45,22 @@ class MessageBubble extends StatelessWidget {
                 children: [
                   if (message.hasImages) ...[
                     _buildImagesGrid(context, maxWidth),
+                    if (message.text.isNotEmpty || message.hasDocuments)
+                      const SizedBox(height: 8),
+                  ],
+                  if (message.hasDocuments) ...[
+                    _buildDocuments(context, maxWidth),
                     if (message.text.isNotEmpty) const SizedBox(height: 8),
                   ],
-
-                  if (message.text.isNotEmpty) ...[
+                  if (message.text.isNotEmpty && !message.isError) ...[
                     Container(
                       constraints: BoxConstraints(maxWidth: maxWidth),
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 12),
                       decoration: BoxDecoration(
                         color: isUser
-                            ? colorScheme.primary.withValues(
-                                alpha: 0.15,
-                              )
-                            : colorScheme.surfaceContainerHighest,
+                            ? colorScheme.primaryContainer
+                            : colorScheme.surfaceContainerLow,
                         borderRadius: BorderRadius.only(
                           topLeft: const Radius.circular(20),
                           topRight: const Radius.circular(20),
@@ -71,8 +73,8 @@ class MessageBubble extends StatelessWidget {
                         ),
                         border: Border.all(
                           color: isUser
-                              ? colorScheme.primary.withValues(alpha: 0.3)
-                              : Colors.transparent,
+                              ? colorScheme.primary.withValues(alpha: 0.45)
+                              : colorScheme.outlineVariant,
                           width: 1,
                         ),
                         boxShadow: [
@@ -87,11 +89,13 @@ class MessageBubble extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          SelectableText(
+                          Text(
                             message.text,
                             style: TextStyle(
-                              color: colorScheme.onSurface,
-                              fontSize: 15,
+                              color: isUser
+                                  ? colorScheme.onPrimaryContainer
+                                  : colorScheme.onSurface,
+                              fontSize: 16,
                               height: 1.5,
                             ),
                           ),
@@ -105,13 +109,13 @@ class MessageBubble extends StatelessWidget {
                       padding: const EdgeInsets.all(4),
                       decoration: BoxDecoration(
                         color: isUser
-                            ? colorScheme.primary.withValues(alpha: 0.15)
-                            : colorScheme.surfaceContainerHighest,
+                            ? colorScheme.primaryContainer
+                            : colorScheme.surfaceContainerLow,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
                           color: isUser
-                              ? colorScheme.primary.withValues(alpha: 0.3)
-                              : Colors.transparent,
+                              ? colorScheme.primary.withValues(alpha: 0.45)
+                              : colorScheme.outlineVariant,
                           width: 1,
                         ),
                       ),
@@ -128,7 +132,7 @@ class MessageBubble extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 12),
                       decoration: BoxDecoration(
-                        color: colorScheme.errorContainer.withValues(alpha: 0.25),
+                        color: colorScheme.errorContainer,
                         borderRadius: BorderRadius.only(
                           topLeft: const Radius.circular(20),
                           topRight: const Radius.circular(20),
@@ -136,7 +140,7 @@ class MessageBubble extends StatelessWidget {
                           bottomRight: const Radius.circular(4),
                         ),
                         border: Border.all(
-                          color: colorScheme.error.withValues(alpha: 0.25),
+                          color: colorScheme.error.withValues(alpha: 0.45),
                           width: 1,
                         ),
                       ),
@@ -144,11 +148,11 @@ class MessageBubble extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          SelectableText(
+                          Text(
                             message.text,
                             style: TextStyle(
                               color: colorScheme.onErrorContainer,
-                              fontSize: 15,
+                              fontSize: 16,
                               height: 1.5,
                             ),
                           ),
@@ -159,7 +163,7 @@ class MessageBubble extends StatelessWidget {
                               Text(
                                 _formatTime(message.timestamp),
                                 style: TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 12,
                                   color: colorScheme.onSurfaceVariant,
                                 ),
                               ),
@@ -182,17 +186,97 @@ class MessageBubble extends StatelessWidget {
               ),
             ),
           ),
-
           if (!isUser) ...[
             const SizedBox(width: 4),
-            _CopyButton(
-              text: message.text,
-              onTap: onCopy,
-            ),
+            _CopyButton(onTap: onCopy),
           ],
         ],
       ),
     );
+  }
+
+  Widget _buildDocuments(BuildContext context, double maxWidth) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final documents = message.documents ?? [];
+    final foregroundColor =
+        message.isUser ? colorScheme.onPrimaryContainer : colorScheme.onSurface;
+
+    return Container(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: message.isUser
+            ? colorScheme.primaryContainer
+            : colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(16),
+          topRight: const Radius.circular(16),
+          bottomLeft: message.isUser
+              ? const Radius.circular(16)
+              : const Radius.circular(4),
+          bottomRight: message.isUser
+              ? const Radius.circular(4)
+              : const Radius.circular(16),
+        ),
+        border: Border.all(
+          color: message.isUser
+              ? colorScheme.primary.withValues(alpha: 0.45)
+              : colorScheme.outlineVariant,
+          width: 1,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final document in documents)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _documentIcon(document.kind),
+                    size: 16,
+                    color: foregroundColor.withValues(alpha: 0.8),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      document.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: foregroundColor,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    document.truncated
+                        ? '${document.sizeFormatted} · recortado'
+                        : document.sizeFormatted,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: foregroundColor.withValues(alpha: 0.7),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  IconData _documentIcon(DocumentKind kind) {
+    return switch (kind) {
+      DocumentKind.pdf => Icons.picture_as_pdf,
+      DocumentKind.spreadsheet => Icons.table_chart,
+      DocumentKind.text => Icons.description,
+    };
   }
 
   Widget _buildImagesGrid(BuildContext context, double maxWidth) {
@@ -284,20 +368,27 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
-  Widget _buildImageWidget(BuildContext context, int index,
-      double? width, double? height) {
+  Widget _buildImageWidget(
+      BuildContext context, int index, double? width, double? height) {
     final images = message.images ?? [];
     if (index >= images.length) return _buildPlaceholder(context);
 
     final image = images[index];
     return GestureDetector(
-      onTap: () => onImageTap?.call(),
+      onTap: () {
+        if (onImageTap != null) {
+          onImageTap!();
+          return;
+        }
+        _showImageViewer(context, image);
+      },
       child: image.base64Data != null && image.base64Data!.isNotEmpty
           ? Image.memory(
               base64Decode(image.base64Data!),
               width: width,
               height: height,
               fit: BoxFit.cover,
+              cacheWidth: 800,
               errorBuilder: (_, __, ___) => _buildPlaceholder(context),
             )
           : image.localPath != null && image.localPath!.isNotEmpty
@@ -306,9 +397,61 @@ class MessageBubble extends StatelessWidget {
                   width: width,
                   height: height,
                   fit: BoxFit.cover,
+                  cacheWidth: 800,
                   errorBuilder: (_, __, ___) => _buildPlaceholder(context),
                 )
               : _buildPlaceholder(context),
+    );
+  }
+
+  /// Visor a pantalla completa para las imágenes del mensaje.
+  Future<void> _showImageViewer(
+    BuildContext context,
+    MessageImage image,
+  ) async {
+    Widget imageWidget;
+    if (image.base64Data != null && image.base64Data!.isNotEmpty) {
+      imageWidget = Image.memory(
+        base64Decode(image.base64Data!),
+        fit: BoxFit.contain,
+      );
+    } else if (image.localPath != null && image.localPath!.isNotEmpty) {
+      imageWidget = Image.file(
+        File(image.localPath!),
+        fit: BoxFit.contain,
+      );
+    } else {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black87,
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                IconButton(
+                  tooltip: 'Cerrar',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close),
+                ),
+              ],
+            ),
+            Flexible(
+              child: InteractiveViewer(
+                minScale: 0.8,
+                maxScale: 5,
+                child: imageWidget,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -344,7 +487,7 @@ class MessageBubble extends StatelessWidget {
             child: Text(
               message.model!,
               style: TextStyle(
-                fontSize: 10,
+                fontSize: 12,
                 color: colorScheme.onPrimaryContainer,
                 fontWeight: FontWeight.w500,
               ),
@@ -355,7 +498,7 @@ class MessageBubble extends StatelessWidget {
         Text(
           _formatTime(message.timestamp),
           style: TextStyle(
-            fontSize: 11,
+            fontSize: 12,
             color: colorScheme.onSurfaceVariant,
           ),
         ),
@@ -414,39 +557,24 @@ class _ActionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.125),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 12, color: color),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: color,
-              ),
-            ),
-          ],
-        ),
+    return TextButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 16),
+      label: Text(label),
+      style: TextButton.styleFrom(
+        foregroundColor: color,
+        minimumSize: const Size(0, 40),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        tapTargetSize: MaterialTapTargetSize.padded,
       ),
     );
   }
 }
 
 class _CopyButton extends StatefulWidget {
-  final String text;
   final VoidCallback? onTap;
 
-  const _CopyButton({required this.text, this.onTap});
+  const _CopyButton({this.onTap});
 
   @override
   State<_CopyButton> createState() => _CopyButtonState();
@@ -464,35 +592,30 @@ class _CopyButtonState extends State<_CopyButton> {
       child: AnimatedOpacity(
         duration: const Duration(milliseconds: 150),
         opacity: _isHovered ? 1.0 : 0.0,
-        child: GestureDetector(
-          onTap: () {
-            Clipboard.setData(ClipboardData(text: widget.text));
-            widget.onTap?.call();
-            setState(() => _copied = true);
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Respuesta copiada'),
-                duration: Duration(milliseconds: 1500),
-                behavior: SnackBarBehavior.floating,
-                margin: EdgeInsets.only(bottom: 80, left: 16, right: 16),
-              ),
-            );
-            Future.delayed(const Duration(seconds: 2), () {
-              if (mounted) setState(() => _copied = false);
-            });
-          },
-          child: Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              _copied ? Icons.check : Icons.copy,
-              size: 14,
-              color: _copied
-                  ? Colors.green
+        child: IgnorePointer(
+          ignoring: !_isHovered,
+          child: IconButton(
+            tooltip: 'Copiar respuesta',
+            onPressed: () {
+              // El copiado y su aviso los gestiona quien construye la burbuja,
+              // para no mostrar dos avisos por pulsación.
+              widget.onTap?.call();
+              setState(() => _copied = true);
+              Future.delayed(const Duration(seconds: 2), () {
+                if (mounted) setState(() => _copied = false);
+              });
+            },
+            style: IconButton.styleFrom(
+              backgroundColor:
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
+              foregroundColor: _copied
+                  ? Theme.of(context).colorScheme.tertiary
                   : Theme.of(context).colorScheme.onSurfaceVariant,
+              minimumSize: const Size(40, 40),
+            ),
+            icon: Icon(
+              _copied ? Icons.check : Icons.copy,
+              size: 18,
             ),
           ),
         ),

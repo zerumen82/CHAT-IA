@@ -178,7 +178,6 @@ class ModelCatalogService with ChangeNotifier {
     try {
       final queryParams = <String, String>{
         'limit': limit.toString(),
-        'filter': 'text-generation',
         'sort': 'downloads',
         'direction': '-1',
       };

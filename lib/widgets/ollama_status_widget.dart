@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../services/chat_service_ollama.dart';
 import '../services/ollama_service.dart';
 import '../screens/ollama_manager_screen.dart';
 
@@ -62,7 +63,7 @@ class OllamaQuickConnect extends StatelessWidget {
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () {
-                    context.read<OllamaService>().checkInstallation();
+                    context.read<ChatServiceOllama>().loadModels();
                   },
                   icon: const Icon(Icons.refresh, size: 18),
                   label: const Text('Reintentar'),
@@ -102,7 +103,9 @@ class OllamaStatusWidget extends StatelessWidget {
       builder: (context, ollama, _) {
         final status = ollama.serverInfo.status;
         final isRunning = status == OllamaStatus.running;
-        final statusColor = isRunning ? Colors.green : Colors.orange;
+        final colorScheme = Theme.of(context).colorScheme;
+        final statusColor =
+            isRunning ? colorScheme.tertiary : colorScheme.error;
 
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -132,9 +135,7 @@ class OllamaStatusWidget extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
-                  color: isRunning
-                      ? Colors.green.shade700
-                      : Colors.orange.shade800,
+                  color: isRunning ? colorScheme.tertiary : colorScheme.error,
                 ),
               ),
             ],

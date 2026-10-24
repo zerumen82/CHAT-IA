@@ -12,17 +12,22 @@ class CapsuleIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final topColor = color ?? theme.colorScheme.primary;
+    final bottomColor = color ?? theme.colorScheme.secondary;
+
     return CustomPaint(
       size: Size(size, size),
-      painter: CapsulePainter(color ?? Colors.white),
+      painter: CapsulePainter(topColor, bottomColor),
     );
   }
 }
 
 class CapsulePainter extends CustomPainter {
-  final Color color;
+  final Color topColor;
+  final Color bottomColor;
 
-  CapsulePainter(this.color);
+  CapsulePainter(this.topColor, this.bottomColor);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -30,8 +35,8 @@ class CapsulePainter extends CustomPainter {
     final height = size.height;
     final radius = width * 0.15;
 
-    // Cápsula superior (roja)
-    final topPaint = Paint()..color = Colors.red;
+    // Cápsula superior
+    final topPaint = Paint()..color = topColor;
     final topRect = RRect.fromRectAndCorners(
       Rect.fromLTWH(width * 0.2, height * 0.1, width * 0.6, height * 0.4),
       topLeft: Radius.circular(radius),
@@ -39,8 +44,8 @@ class CapsulePainter extends CustomPainter {
     );
     canvas.drawRRect(topRect, topPaint);
 
-    // Cápsula inferior (azul)
-    final bottomPaint = Paint()..color = Colors.blue;
+    // Cápsula inferior
+    final bottomPaint = Paint()..color = bottomColor;
     final bottomRect = RRect.fromRectAndCorners(
       Rect.fromLTWH(width * 0.2, height * 0.5, width * 0.6, height * 0.4),
       bottomLeft: Radius.circular(radius),
