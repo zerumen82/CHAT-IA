@@ -5,11 +5,16 @@
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
+import 'dart:io';
+
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:lightchat/main.dart';
+import 'package:lightchat/models/document_attachment.dart';
 import 'package:lightchat/models/message.dart';
 import 'package:lightchat/widgets/chat_input.dart';
 import 'package:lightchat/widgets/message_bubble.dart';
@@ -106,6 +111,166 @@ void main() {
     expect(find.text('Liberar GPU'), findsOneWidget);
     expect(find.text('Descargar modelos de la VRAM'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('shows the conversation sidebar only on wide windows',
+      (tester) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    await tester.pumpWidget(const MyApp());
+    await tester.pump();
+
+    expect(find.text('Conversaciones'), findsOneWidget);
+    expect(find.byTooltip('Nueva conversación'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.binding.setSurfaceSize(const Size(600, 800));
+    await tester.pumpWidget(const MyApp());
+    await tester.pump();
+
+    expect(find.text('Conversaciones'), findsNothing);
+    expect(tester.takeException(), isNull);
+
+    await tester.binding.setSurfaceSize(null);
+  });
+
+  testWidgets('renders assistant markdown with copyable code blocks',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MessageBubble(
+            message: Message(
+              text: '**Importante**\n\n```dart\nprint(1);\n```',
+              isUser: false,
+              timestamp: DateTime(2026, 10, 24),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(MarkdownBody), findsOneWidget);
+    expect(find.text('DART'), findsOneWidget);
+    expect(find.byTooltip('Copiar código'), findsOneWidget);
+    expect(find.textContaining('**'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('offers regenerate on the last answer and edit on user messages',
+      (tester) async {
+    var regenerated = false;
+    var edited = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              MessageBubble(
+                message: Message(
+                  text: 'Pregunta',
+                  isUser: true,
+                  timestamp: DateTime(2026, 10, 24),
+                ),
+                onEdit: () => edited = true,
+              ),
+              MessageBubble(
+                message: Message(
+                  text: 'Respuesta',
+                  isUser: false,
+                  timestamp: DateTime(2026, 10, 24),
+                ),
+                onRegenerate: () => regenerated = true,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Regenerar'));
+    await tester.pump();
+    expect(regenerated, isTrue);
+
+    await tester.tap(find.byTooltip('Editar y reenviar'));
+    await tester.pump();
+    expect(edited, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('extracts an attached file and shows its text and context meter',
+      (tester) async {
+    final chatInputKey = GlobalKey<ChatInputState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatInput(
+            key: chatInputKey,
+            connected: true,
+            onSendMessage: (text, images, documents) {},
+          ),
+        ),
+      ),
+    );
+
+    final directory = (await tester.runAsync(
+      () => Directory.systemTemp.createTemp('lightchat-ui'),
+    ))!;
+    final file = File('${directory.path}/notas.txt');
+    await tester.runAsync(() async {
+      await file.writeAsString('Contenido de prueba');
+      await chatInputKey.currentState!.addFiles([XFile(file.path)]);
+    });
+    await tester.pumpAndSettle();
+
+    expect(find.text('notas.txt'), findsOneWidget);
+    expect(find.textContaining('Contexto de documentos'), findsOneWidget);
+
+    await tester.tap(find.text('notas.txt'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Copiar texto'), findsOneWidget);
+    expect(find.text('Contenido de prueba'), findsOneWidget);
+    expect(find.textContaining('caracteres enviados'), findsOneWidget);
+
+    await tester.tap(find.text('Cerrar'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(() => directory.delete(recursive: true));
+  });
+
+  testWidgets('shows the document chip text in the message bubble',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MessageBubble(
+            message: Message(
+              text: 'Resumen',
+              isUser: true,
+              timestamp: DateTime(2026, 10, 24),
+              documents: const [
+                DocumentAttachment(
+                  path: 'informe.pdf',
+                  name: 'informe.pdf',
+                  kind: DocumentKind.pdf,
+                  sizeBytes: 2048,
+                  text: 'Texto extraído del PDF',
+                  originalChars: 24,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('informe.pdf'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Texto extraído del PDF'), findsOneWidget);
+    expect(find.textContaining('caracteres enviados'), findsOneWidget);
+    await tester.tap(find.text('Cerrar'));
+    await tester.pumpAndSettle();
   });
 
   testWidgets('sends the message when Enter is pressed', (tester) async {

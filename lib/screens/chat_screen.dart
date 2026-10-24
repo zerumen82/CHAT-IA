@@ -13,6 +13,7 @@ import 'package:lightchat/services/chat_service_ollama.dart';
 import 'package:lightchat/services/ollama_service.dart';
 import 'package:lightchat/widgets/capsule_icon.dart';
 import 'package:lightchat/widgets/chat_input.dart';
+import 'package:lightchat/widgets/conversation_sidebar.dart';
 import 'package:lightchat/widgets/message_bubble.dart';
 import 'package:lightchat/widgets/model_selector.dart';
 import 'package:lightchat/widgets/ollama_status_widget.dart';
@@ -30,6 +31,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _consoleScrollController = ScrollController();
   final GlobalKey<ChatInputState> _chatInputKey = GlobalKey<ChatInputState>();
   bool _showConsole = false;
+  bool _showSidebar = true;
   bool _isDraggingFiles = false;
   bool _autoScroll = true;
   bool _scrollScheduled = false;
@@ -98,6 +100,74 @@ class _ChatScreenState extends State<ChatScreen> {
     context.read<ChatServiceOllama>().retryLastMessage();
   }
 
+  void _regenerateResponse() {
+    _autoScroll = true;
+    _scheduleAutoScroll();
+    context.read<ChatServiceOllama>().regenerateLastResponse();
+  }
+
+  /// Edita un mensaje del usuario y lo vuelve a enviar.
+  Future<void> _editMessage(int index, String currentText) async {
+    final controller = TextEditingController(text: currentText);
+    final chatService = context.read<ChatServiceOllama>();
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Editar mensaje'),
+        content: SizedBox(
+          width: 520,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: controller,
+                autofocus: true,
+                minLines: 3,
+                maxLines: 8,
+                textInputAction: TextInputAction.newline,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'Mensaje',
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Al reenviar se descarta lo que venga después y el modelo '
+                'vuelve a responder.',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            child: const Text('Reenviar'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+
+    if (result == null) {
+      return;
+    }
+    final text = result.trim();
+    if (text.isEmpty || text == currentText.trim()) {
+      return;
+    }
+
+    _autoScroll = true;
+    _scheduleAutoScroll();
+    await chatService.editAndResend(index, text);
+  }
+
   void _stopGeneration() {
     context.read<ChatServiceOllama>().stopGeneration();
   }
@@ -106,77 +176,101 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    return Scaffold(
-      backgroundColor: colorScheme.surface,
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(kToolbarHeight),
-        child: Consumer<ChatServiceOllama>(
-          builder: (context, chatService, _) =>
-              _buildAppBar(context, chatService),
-        ),
-      ),
-      body: DropTarget(
-        enable: ModalRoute.of(context)?.isCurrent ?? true,
-        onDragEntered: (_) {
-          setState(() => _isDraggingFiles = true);
-        },
-        onDragExited: (_) {
-          setState(() => _isDraggingFiles = false);
-        },
-        onDragDone: (details) {
-          setState(() => _isDraggingFiles = false);
-          _chatInputKey.currentState?.addFiles(details.files);
-        },
-        child: Stack(
-          children: [
-            Column(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // En ventanas estrechas la barra lateral deja el chat sin sitio.
+        final canShowSidebar = constraints.maxWidth >= 720;
+        final showSidebar = _showSidebar && canShowSidebar;
+
+        return Scaffold(
+          backgroundColor: colorScheme.surface,
+          appBar: PreferredSize(
+            preferredSize: const Size.fromHeight(kToolbarHeight),
+            child: Consumer<ChatServiceOllama>(
+              builder: (context, chatService, _) =>
+                  _buildAppBar(context, chatService, canShowSidebar),
+            ),
+          ),
+          body: DropTarget(
+            enable: ModalRoute.of(context)?.isCurrent ?? true,
+            onDragEntered: (_) {
+              setState(() => _isDraggingFiles = true);
+            },
+            onDragExited: (_) {
+              setState(() => _isDraggingFiles = false);
+            },
+            onDragDone: (details) {
+              setState(() => _isDraggingFiles = false);
+              _chatInputKey.currentState?.addFiles(details.files);
+            },
+            child: Row(
               children: [
-                Selector<ChatServiceOllama, bool>(
-                  selector: (_, chatService) =>
-                      chatService.availableModels.isEmpty,
-                  builder: (context, noModels, _) {
-                    if (!noModels) return const SizedBox.shrink();
-                    return Selector<OllamaService, bool>(
-                      selector: (_, ollama) =>
-                          ollama.serverInfo.status != OllamaStatus.running,
-                      builder: (context, offline, _) => offline
-                          ? const OllamaQuickConnect()
-                          : const SizedBox.shrink(),
-                    );
-                  },
-                ),
+                if (showSidebar) ...[
+                  SizedBox(
+                    width: math.min(280.0, constraints.maxWidth * 0.38),
+                    child: const ConversationSidebar(),
+                  ),
+                  VerticalDivider(width: 1, color: colorScheme.outlineVariant),
+                ],
                 Expanded(
-                  child: Selector<ChatServiceOllama, int>(
-                    selector: (_, chatService) => chatService.messagesVersion,
-                    builder: (context, _, __) =>
-                        _buildMessageList(context.read<ChatServiceOllama>()),
-                  ),
-                ),
-                Selector<ChatServiceOllama, bool>(
-                  selector: (_, chatService) => chatService.isLoading,
-                  builder: (context, isLoading, _) => isLoading
-                      ? _buildTypingIndicator(context)
-                      : const SizedBox.shrink(),
-                ),
-                Selector<ChatServiceOllama, ({bool loading, bool connected})>(
-                  selector: (_, chatService) => (
-                    loading: chatService.isLoading,
-                    connected: chatService.availableModels.isNotEmpty,
-                  ),
-                  builder: (context, state, _) => ChatInput(
-                    key: _chatInputKey,
-                    onSendMessage: _handleSendMessage,
-                    busy: state.loading,
-                    connected: state.connected,
+                  child: Stack(
+                    children: [
+                      Column(
+                        children: [
+                          Selector<ChatServiceOllama, bool>(
+                            selector: (_, chatService) =>
+                                chatService.availableModels.isEmpty,
+                            builder: (context, noModels, _) {
+                              if (!noModels) return const SizedBox.shrink();
+                              return Selector<OllamaService, bool>(
+                                selector: (_, ollama) =>
+                                    ollama.serverInfo.status !=
+                                    OllamaStatus.running,
+                                builder: (context, offline, _) => offline
+                                    ? const OllamaQuickConnect()
+                                    : const SizedBox.shrink(),
+                              );
+                            },
+                          ),
+                          Expanded(
+                            child: Selector<ChatServiceOllama, int>(
+                              selector: (_, chatService) =>
+                                  chatService.messagesVersion,
+                              builder: (context, _, __) => _buildMessageList(
+                                  context.read<ChatServiceOllama>()),
+                            ),
+                          ),
+                          Selector<ChatServiceOllama, bool>(
+                            selector: (_, chatService) => chatService.isLoading,
+                            builder: (context, isLoading, _) => isLoading
+                                ? _buildTypingIndicator(context)
+                                : const SizedBox.shrink(),
+                          ),
+                          Selector<ChatServiceOllama,
+                              ({bool loading, bool connected})>(
+                            selector: (_, chatService) => (
+                              loading: chatService.isLoading,
+                              connected: chatService.availableModels.isNotEmpty,
+                            ),
+                            builder: (context, state, _) => ChatInput(
+                              key: _chatInputKey,
+                              onSendMessage: _handleSendMessage,
+                              busy: state.loading,
+                              connected: state.connected,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_showConsole) _buildFloatingConsole(),
+                      if (_isDraggingFiles) _buildDropOverlay(),
+                    ],
                   ),
                 ),
               ],
             ),
-            if (_showConsole) _buildFloatingConsole(),
-            if (_isDraggingFiles) _buildDropOverlay(),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -221,7 +315,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'PDF, Excel, CSV, TXT o imágenes',
+                  'PDF, Word, Excel, PowerPoint o imágenes',
                   style: TextStyle(
                     fontSize: 13,
                     color: colorScheme.onSurfaceVariant,
@@ -238,6 +332,7 @@ class _ChatScreenState extends State<ChatScreen> {
   PreferredSizeWidget _buildAppBar(
     BuildContext context,
     ChatServiceOllama chatService,
+    bool canShowSidebar,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -245,6 +340,15 @@ class _ChatScreenState extends State<ChatScreen> {
       elevation: 0,
       scrolledUnderElevation: 1,
       backgroundColor: colorScheme.surface,
+      leading: canShowSidebar
+          ? IconButton(
+              tooltip: _showSidebar
+                  ? 'Ocultar conversaciones'
+                  : 'Mostrar conversaciones',
+              onPressed: () => setState(() => _showSidebar = !_showSidebar),
+              icon: Icon(_showSidebar ? Icons.menu_open : Icons.menu),
+            )
+          : null,
       title: Row(
         children: [
           const CapsuleIcon(size: 28),
@@ -569,11 +673,15 @@ class _ChatScreenState extends State<ChatScreen> {
         itemCount: messages.length,
         itemBuilder: (context, index) {
           final message = messages[index];
+          final isLast = index == messages.length - 1;
           return MessageBubble(
             message: message,
-            onRetry: message.isError && index == messages.length - 1
-                ? _retryMessage
+            onRetry: message.isError && isLast ? _retryMessage : null,
+            onRegenerate: !message.isUser && !message.isError && isLast
+                ? _regenerateResponse
                 : null,
+            onEdit:
+                message.isUser ? () => _editMessage(index, message.text) : null,
             onCopy: () {
               Clipboard.setData(ClipboardData(text: message.text));
               ScaffoldMessenger.of(context).showSnackBar(
@@ -640,7 +748,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Arrastra o adjunta un PDF o Excel para preguntar sobre él',
+                      'Arrastra o adjunta un PDF, Word, Excel o PowerPoint para '
+                      'preguntar sobre él',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 13,

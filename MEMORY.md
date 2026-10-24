@@ -15,9 +15,9 @@
 | Ciclo | **Usable y en mantenimiento**; migración vLLM → Ollama completada 2026-03-02 |
 | Rama | `master` (única), remoto `github.com/zerumen82/CHAT-IA`, **árbol limpio** al momento de revisar |
 | Builds recientes | Último commit significativo: `63d2175` "Migración a Ollama: multimodal, icono retrocápsula, 8 idiomas, modelo preferido guardado" |
-| Tamaño código | ~9,500 líneas Dart en `lib/` (21 archivos `.dart`) |
+| Tamaño código | ~11,500 líneas Dart en `lib/` (26 archivos `.dart`) |
 | `flutter analyze` | **Sin incidencias** |
-| `flutter test` | **37 pruebas pasan**: chat, reintento, documentos (TXT/XLSX/PDF/fechas), idioma, detección de modelos sin censura, recomendaciones, temas y ventana estrecha |
+| `flutter test` | **58 pruebas pasan**: chat, reintento, regenerar/editar, conversaciones, documentos (DOCX/PPTX/HTML/XML/TSV/CSV/XLSX/PDF/fechas), idioma, detección de modelos sin censura, recomendaciones, temas, Markdown y ventana estrecha |
 | Build Windows | `flutter build windows` completado correctamente (2026-10-18) |
 | CI/CD | No hay (sin `.github/workflows`) |
 | Instaladores | Inno Setup (`installer/lightchat_setup.iss`), script Ollama (`installer/install_ollama.ps1`), `build_installer.ps1`, `dist/` con build PyInstaller antigua |
@@ -84,8 +84,11 @@
 |---|---|---|
 | **Backend único: Ollama** | vLLM y LM Studio eliminados | Migración 2026-03-02: de ~10GB/30min a ~200MB/30s y cross-platform. Documentada en `MIGRATION_OLLAMA.md`. |
 | **Sin soporte de programación/IDE** | Campos previos como `ide_screen`, `code_analysis_service`: borrados en "Fase 1 – Limpieza" (2026-02-14) | Reenfoque a chat general estilo mensajería. |
-| **Dependencias acotadas** | `provider` para estado, `http` para streaming de Ollama, `shared_preferences` para preferencias, `file_selector`/`desktop_drop` para archivos, `syncfusion_flutter_pdf` + `archive` + `xml` para documentos (`pubspec.yaml`) | Decidido en plan 2026-02-14; `dio`, `uuid`, `path_provider`, `image`, `flutter_animate` y `cupertino_icons` retirados el 2026-10-24 al no tener uso. |
-| **Documentos: `desktop_drop` + Syncfusion PDF 30.x + parser XLSX propio** | `desktop_drop` recibe archivos del sistema; `syncfusion_flutter_pdf` 30.2.7 extrae texto; XLSX se lee con `archive` + `xml` (ZIP/Office Open XML) | 2026-10-23: `excel` 4.0.6 exige `archive ^3.6.1` e `image` exige `archive ^4.0.7`; Syncfusion ≥31 exige `xml 7` e `image` usa `xml ^6`. No añadir `excel` sin resolver ese conflicto. |
+| **Dependencias acotadas** | `provider` para estado, `http` para streaming de Ollama, `shared_preferences` para preferencias, `file_selector`/`desktop_drop` para archivos, `syncfusion_flutter_pdf` + `archive` + `xml` para documentos, `flutter_markdown_plus` + `markdown` para las respuestas (`pubspec.yaml`) | Decidido en plan 2026-02-14; `dio`, `uuid`, `path_provider`, `image`, `flutter_animate` y `cupertino_icons` retirados el 2026-10-24 al no tener uso. |
+| **Documentos: `desktop_drop` + Syncfusion PDF 35.x + parser Office propio** | `desktop_drop` recibe archivos del sistema; `syncfusion_flutter_pdf` 35.1.41 extrae texto; XLSX, DOCX y PPTX se leen con `archive` + `xml` (ZIP/Office Open XML); HTML con `html`; CSV/TSV con un separador de comillas propio | 2026-10-24: actualizado 30.2.7 → 35.1.41 con `xml` 7.1.0. La restricción a 30.x venía de `image` (exigía `xml ^6`); retirado `image`, ya no aplica. Las pruebas de PDF pasan con 35. |
+| **Dependencias al día (2026-10-24)** | Flutter 3.47.8 · `syncfusion_flutter_pdf` 35.1.41 · `xml` 7.1.0 · `window_manager` 0.5.2 (`screen_retriever` 0.2.2) · `archive` 4.5.2 · `http` 1.6.0 · `image_picker` 1.2.4 · `shared_preferences` 2.5.6 · `system_info2` 4.2.0 · `flutter_markdown_plus` 1.0.12 | Subidas con `flutter pub upgrade --major-versions`; no hubo cambios de código. `desktop_drop` se queda en 0.8.4: la 0.9.2 exige `cross_file ^0.4.0` y `file_selector` fija `cross_file` 0.3.x. |
+| **Markdown con `flutter_markdown_plus`** | Sustituye a `flutter_markdown`, que está discontinuado; `markdown` se declara explícito para el builder de bloques de código | 2026-10-24: el renderizado se aplica solo a respuestas del asistente, nunca al texto que escribe el usuario. |
+| **Una clave de `SharedPreferences` por conversación** | `lightchat_conversations_v1` (índice), `lightchat_active_conversation_v1`, `lightchat_conversation_messages_v1_<id>`; el historial antiguo (`chat_messages`) se migra a la primera conversación | 2026-10-24: guardar todo el historial junto obligaba a reescribir MB al cambiar de chat. El nombre visible se toma del primer mensaje del usuario salvo que se renombre. |
 | **Singleton de servicios** | Patrón `XxxService.instance` registrado en `main.dart` con `provider` | Ya aplicado en `ollama_service.dart`; mantener consistencia. |
 | **Planes en `plans/` (español)** | `YYYY-MM-DD_Nombre_Contexto.md` | Formato establecido 2026-02-14; es el "estilo de otros proyectos" del equipo: documento de resumen + documento de plan. |
 | **Puerto Ollama 11434** | Configurable en la app si cambia `OLLAMA_HOST` | Estándar de Ollama. |
@@ -95,8 +98,9 @@
 
 - **Máquina:** Windows (Git Bash/MSYS), ruta real del proyecto `D:\PROJECTS\LITGHCHAT\lightchat`.
 - **GPU:** NVIDIA RTX 3060 Ti, **8 GB VRAM** → mantener modelos en 7–8B Q4. Descargados el 2026-10-23: `qwen2.5:7b` (normal) y `huihui_ai/qwen2.5-abliterate:7b-instruct-q4_K_M` (sin censura), ~4,7 GB cada uno; ambos respondieron correctamente sobre texto tipo Excel.
-- **Flutter 3.41.7 stable**, canal stable. `flutter --version` imprime aviso de versión nueva (actualizar opcional).
-- **Análisis completo tarda ~62 s** (`flutter analyze`) — preveerlo al verificar cambios.
+- **Flutter 3.47.8 stable**, canal stable, **Dart 3.13.7** (actualizado el 2026-10-24 desde 3.41.7).
+- **Análisis completo tarda ~40 s** (`flutter analyze`) — preveerlo al verificar cambios.
+- Flutter 3.47 añadió solo, al hacer `pub get`, un bloque `analyzer.exclude` en `analysis_options.yaml` para `build/` y los directorios de plataforma; se conserva.
 - **Sin** Docker, servicios, BD ni credenciales: proyecto 100% cliente.
 - Directorios ignorados por git/agents locales: `build/`, `.dart_tool/`, `.idea/`, `dist/` parcialmente trackeado (ver deuda).
 
@@ -123,6 +127,15 @@
     - UI: botón Detener, autoscroll respetuoso, Enter envía (Shift+Enter salta línea), «Archivo…» en el clip, visor de imágenes, consola con autoscroll y Limpiar, sin modelo duplicado en la barra.
     - Seguridad: cerrar la app ya no ejecuta `taskkill /F /IM ollama.exe`; solo detiene el proceso que inició LightChat. Al cerrar la ventana se descargan los modelos cargados (`/api/ps` + `/api/generate` con `keep_alive: 0`) para liberar VRAM sin apagar el servidor. Además hay una acción manual «Liberar GPU» en el menú ⋮ del chat y un botón en la barra de estado del gestor de Ollama, que avisan de cuántos modelos se liberaron. Verificado en vivo: 1 modelo cargado → 1 descargado → 0 en `/api/ps`.
     - Poda: 5 archivos muertos y 6 dependencias sin uso (~1,500 líneas menos). Verificados `flutter test` (37), `flutter analyze` y `flutter build windows`.
+15. **Archivos, Markdown y conversaciones** (2026-10-24):
+    - Documentos: `DocumentService` añade DOCX (párrafos + tablas), PPTX (diapositivas en orden), HTML (sin scripts ni estilos), XML (texto de elementos con entidades) y TSV; CSV/TSV se presentan como `Fila N: a | b` igual que un XLSX. Nuevo `DocumentKind.presentation`. Mensaje de formatos centralizado en `DocumentService.supportedFormatsLabel`.
+    - Transparencia: `showDocumentTextDialog` abre el texto exacto enviado al modelo desde el chip de `ChatInput` y desde los documentos de la burbuja (también si hubo error o recorte).
+    - Contexto: barra en la entrada con los caracteres que ocuparán los documentos sobre los 16.000 disponibles (`DocumentService.contextCharsFor`), en rojo cuando el último se recortará.
+    - UI: respuestas del asistente en Markdown (negritas, listas, tablas, encabezados) con bloques de código que muestran el lenguaje y botón «Copiar código»; «Regenerar» en la última respuesta; «Editar y reenviar» en un mensaje del usuario (descarta los turnos posteriores y conserva sus adjuntos).
+    - Conversaciones: barra lateral con crear, abrir, renombrar y eliminar; título automático del primer mensaje; guardado por conversación con debounce e índice propio. Se oculta por debajo de 720 px de ancho (decidido con `LayoutBuilder`, no `MediaQuery`).
+    - Correcciones encontradas al probar: `XFile.name` devolvía «carpeta/notas.txt» en rutas con separadores mezclados (ahora el nombre sale del `path`); la tarjeta «Ollama no detectado» usaba un `Row` con dos botones y desbordaba en ventanas estrechas (ahora `Wrap`).
+    - Verificados `flutter test` (58), `flutter analyze` y `flutter build windows`.
+16. **Flutter y dependencias al día** (2026-10-24): Flutter 3.41.7 → **3.47.8** (Dart 3.13.7) y `flutter pub upgrade --major-versions`: Syncfusion PDF 30.2.7 → 35.1.41, `xml` 6.6.1 → 7.1.0, `window_manager` 0.3.9 → 0.5.2, más 33 dependencias menores. Sin cambios de código. Verificados `flutter analyze`, `flutter test` (58) y `flutter build windows`; la app arranca y renderiza con Impeller. `desktop_drop` 0.9.2 no resuelve por `cross_file` 0.3.x de `file_selector`, se queda en 0.8.4.
 
 ## 5. Lecciones y advertencias
 
@@ -133,13 +146,18 @@
 - ⚠️ El selector de modelos debe refrescar `/api/tags` al reintentar; copiar solo la lista en memoria deja modelos nuevos o conexiones tardías invisibles.
 - ⚠️ `https://ollama.com/api/tags` no enumera la biblioteca descargable: para el catálogo usar `/search` con paginación HTMX; validar la paginación con `HX-Request: true` porque sin ese encabezado el sitio devuelve siempre la primera página.
 - ⚠️ `flutter analyze` tiene ~62 s de arranque; ejecutar `flutter pub get` primero en entornos limpios.
-- ⚠️ **No usar el paquete `excel`**: exige `archive ^3.6.1` y `image` ya exige `archive ^4.0.7`. Syncfusion PDF debe quedarse en 30.x porque 31+ exige `xml 7` e `image` usa `xml ^6`.
+- ⚠️ No hace falta el paquete `excel`: XLSX se lee con `archive` + `xml`. La vieja incompatibilidad de Syncfusion ≥31 (`xml 7` contra `image` con `xml ^6`) desapareció al retirar `image`; hoy Syncfusion 35.1.41 y `xml` 7.1.0 conviven.
 - ⚠️ Los PDF escaneados no tienen texto seleccionable: `DocumentService` devuelve un error explícito. No hay OCR.
 - ⚠️ Los Qwen3/Qwen3.5 razonan por defecto (`thinking`): desde 2026-10-24 se envía `think: false` a los modelos de esa familia (`OllamaConfig.isThinkingModel`), pero la app sigue sin leer `message.thinking`.
 - ⚠️ No volver a poner `num_ctx` condicional (4096/8192): Ollama recarga el modelo al cambiar el contexto y se pierden varios segundos en cada cambio de mensaje con/sin documentos.
 - ⚠️ `ContextService.detectLanguage` debe comparar palabras completas; con `contains` y palabras de 1–2 letras se detectaba español en frases inglesas.
 - ⚠️ `OllamaService.instance` debe registrarse con `ChangeNotifierProvider.value`; con `create` el provider lo destruye al desmontar el árbol y la siguiente instancia de `ChatServiceOllama` falla al añadir su listener.
 - ⚠️ Los elementos del menú ⋮ del chat llevan `Expanded`/`Flexible`: sin ellos el PopupMenu desborda en ventanas estrechas.
+- ⚠️ Para decisiones de layout responsivo usar `LayoutBuilder`/constraints, no `MediaQuery.size`: en `flutter_test` tras `setSurfaceSize` la `MediaQuery` puede seguir reportando el tamaño anterior y la barra lateral se renderizaba con 280 px en una ventana de 480.
+- ⚠️ `XFile.name` no es fiable con rutas que mezclan `\` y `/` (por ejemplo, rutas temporales): calcular el nombre visible desde `XFile.path`.
+- ⚠️ Los tests de widgets que leen archivos reales deben envolver la E/S en `tester.runAsync`; dentro de `testWidgets` las rutas de `dart:io` creadas fuera de `runAsync` no completan.
+- ⚠️ En `flutter_markdown_plus`, el builder de bloques de código se registra con la clave `pre` y hay que leer `element.children.first` (`code`) para obtener el lenguaje; `isBlockElement()` debe devolver `true`.
+- ⚠️ `flutter upgrade` puede fallar en el paso de precache con «icudtl.dat is being used by another program» si queda un `flutter_tester.exe` vivo de una suite de tests. Cerrarlo (`taskkill /F /IM flutter_tester.exe`) y completar con `flutter precache --windows`; la actualización del SDK sí se aplica.
 
 ## 6. Cómo actualizar esta memoria
 

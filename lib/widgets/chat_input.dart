@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../models/document_attachment.dart';
 import '../services/document_service.dart';
+import 'document_text_dialog.dart';
 
 enum _AttachAction { file, gallery, camera }
 
@@ -116,16 +117,19 @@ class ChatInputState extends State<ChatInput> {
     if (unsupported.isNotEmpty) {
       _showSnack(
         'No se puede adjuntar: ${unsupported.join(', ')}. '
-        'Formatos admitidos: PDF, XLSX, CSV, TXT, MD, JSON o LOG.',
+        'Formatos admitidos: ${DocumentService.supportedFormatsLabel}.',
       );
     }
   }
 
   String _displayName(XFile file) {
-    if (file.name.isNotEmpty) {
+    // `XFile.name` corta solo por `\` o solo por `/` según la plataforma y
+    // devolvía rutas mezcladas ("carpeta/notas.txt") como nombre visible.
+    final path = file.path;
+    if (path.isEmpty) {
       return file.name;
     }
-    return file.path.split(RegExp(r'[/\\]')).last;
+    return path.split(RegExp(r'[/\\]')).last;
   }
 
   Future<void> _addDocument(XFile file) async {
@@ -391,7 +395,7 @@ class ChatInputState extends State<ChatInput> {
               ),
             if (!hasAttachments)
               Text(
-                'Arrastra o adjunta PDF, Excel o imágenes · Enter envía',
+                'Arrastra o adjunta PDF, Word, Excel o imágenes · Enter envía',
                 style: TextStyle(
                   fontSize: 12,
                   color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
@@ -409,15 +413,76 @@ class ChatInputState extends State<ChatInput> {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          for (var index = 0; index < _documents.length; index++)
-            _buildDocumentChip(colorScheme, _documents[index], index),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (var index = 0; index < _documents.length; index++)
+                _buildDocumentChip(colorScheme, _documents[index], index),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _buildContextMeter(colorScheme),
         ],
       ),
     );
+  }
+
+  /// Barra con el presupuesto de contexto que ocupan los documentos.
+  Widget _buildContextMeter(ColorScheme colorScheme) {
+    const maxChars = DocumentService.maxTotalChars;
+    final used = DocumentService.contextCharsFor(_documents);
+    final ratio = (used / maxChars).clamp(0.0, 1.0);
+    final isFull = used >= maxChars;
+    final color = isFull
+        ? colorScheme.error
+        : ratio >= 0.75
+            ? colorScheme.tertiary
+            : colorScheme.primary;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.data_usage, size: 14, color: color),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                isFull
+                    ? 'Contexto lleno: los últimos documentos se recortarán'
+                    : 'Contexto de documentos: ${_formatChars(used)} de '
+                        '${_formatChars(maxChars)}',
+                style: TextStyle(
+                  fontSize: 12,
+                  color:
+                      isFull ? colorScheme.error : colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(2),
+          child: LinearProgressIndicator(
+            value: ratio,
+            minHeight: 4,
+            color: color,
+            backgroundColor: colorScheme.surfaceContainerHighest,
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _formatChars(int value) {
+    if (value < 1000) return '$value';
+    final thousands = (value / 1000).toStringAsFixed(1);
+    return '${thousands.replaceAll('.0', '')} mil';
   }
 
   Widget _buildDocumentChip(
@@ -428,79 +493,90 @@ class ChatInputState extends State<ChatInput> {
     final isError = document.error != null;
     final accentColor = isError ? colorScheme.error : colorScheme.primary;
 
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 320),
-      padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
-      decoration: BoxDecoration(
-        color: isError
-            ? colorScheme.errorContainer.withValues(alpha: 0.5)
-            : colorScheme.surfaceContainerHighest,
+    return Tooltip(
+      message: document.isLoading
+          ? 'Extrayendo el texto…'
+          : 'Ver el texto que se envía al modelo',
+      child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: isError
-              ? colorScheme.error.withValues(alpha: 0.5)
-              : colorScheme.outlineVariant,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (document.isLoading)
-            SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: accentColor,
+        onTap: document.isLoading
+            ? null
+            : () => showDocumentTextDialog(context, document),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 320),
+          padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+          decoration: BoxDecoration(
+            color: isError
+                ? colorScheme.errorContainer.withValues(alpha: 0.5)
+                : colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isError
+                  ? colorScheme.error.withValues(alpha: 0.5)
+                  : colorScheme.outlineVariant,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (document.isLoading)
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: accentColor,
+                  ),
+                )
+              else
+                Icon(
+                  _documentIcon(document.kind),
+                  size: 20,
+                  color: accentColor,
+                ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      document.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: isError
+                            ? colorScheme.onErrorContainer
+                            : colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _documentSubtitle(document),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isError
+                            ? colorScheme.onErrorContainer
+                            : colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            )
-          else
-            Icon(
-              _documentIcon(document.kind),
-              size: 20,
-              color: accentColor,
-            ),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  document.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: isError
-                        ? colorScheme.onErrorContainer
-                        : colorScheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  _documentSubtitle(document),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: isError
-                        ? colorScheme.onErrorContainer
-                        : colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
+              IconButton(
+                tooltip: 'Quitar documento',
+                onPressed: () => _removeDocument(index),
+                icon: const Icon(Icons.close, size: 16),
+                visualDensity: VisualDensity.compact,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ],
           ),
-          IconButton(
-            tooltip: 'Quitar documento',
-            onPressed: () => _removeDocument(index),
-            icon: const Icon(Icons.close, size: 16),
-            visualDensity: VisualDensity.compact,
-            color: colorScheme.onSurfaceVariant,
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -525,6 +601,7 @@ class ChatInputState extends State<ChatInput> {
     return switch (kind) {
       DocumentKind.pdf => Icons.picture_as_pdf,
       DocumentKind.spreadsheet => Icons.table_chart,
+      DocumentKind.presentation => Icons.slideshow,
       DocumentKind.text => Icons.description,
     };
   }
@@ -639,7 +716,9 @@ class ChatInputState extends State<ChatInput> {
             children: [
               Icon(Icons.upload_file, size: 20, color: colorScheme.primary),
               const SizedBox(width: 12),
-              const Flexible(child: Text('Archivo (PDF, Excel, CSV…)')),
+              const Flexible(
+                child: Text('Archivo (PDF, Word, Excel, PPT…)'),
+              ),
             ],
           ),
         ),

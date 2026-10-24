@@ -80,6 +80,13 @@ void main() {
       }
     });
     await initialLoad.future;
+
+    // La conversación inicial se crea después de cargar los modelos.
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (chatService.activeConversationId == null &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
   });
 
   tearDown(() async {
@@ -196,6 +203,86 @@ void main() {
         (message) => (message['content'] as String).contains('Error'),
       ),
       isFalse,
+    );
+  });
+
+  test('regenerates the last answer without duplicating the question',
+      () async {
+    await chatService.sendMessage('Hola');
+    chatRequests.clear();
+
+    await chatService.regenerateLastResponse();
+
+    final sentMessages = (chatRequests.single['messages'] as List<dynamic>)
+        .cast<Map<String, dynamic>>();
+    expect(sentMessages.map((message) => message['role']), ['system', 'user']);
+    expect(sentMessages.last['content'], 'Hola');
+    expect(
+      chatService.messages.where((message) => message.isUser).length,
+      1,
+    );
+    expect(chatService.messages.last.text, 'primera respuesta!');
+  });
+
+  test('edits a user message and drops the later turns', () async {
+    await chatService.sendMessage('Primera pregunta');
+    await chatService.sendMessage('Segunda pregunta');
+    expect(
+      chatService.messages.where((message) => message.isUser).length,
+      2,
+    );
+    chatRequests.clear();
+
+    final userIndex = chatService.messages.indexWhere(
+      (message) => message.isUser,
+    );
+    await chatService.editAndResend(userIndex, 'Pregunta corregida');
+
+    final sentMessages = (chatRequests.single['messages'] as List<dynamic>)
+        .cast<Map<String, dynamic>>();
+    expect(sentMessages.map((message) => message['role']), ['system', 'user']);
+    expect(sentMessages.last['content'], 'Pregunta corregida');
+    expect(
+      chatService.messages.where((message) => message.isUser).length,
+      1,
+    );
+    expect(chatService.messages.first.text, 'Pregunta corregida');
+  });
+
+  test('keeps separate conversations and restores their messages', () async {
+    await chatService.sendMessage('Hola desde la primera');
+    final firstId = chatService.activeConversationId;
+    expect(firstId, isNotNull);
+    expect(chatService.conversations.first.title, 'Hola desde la primera');
+
+    await chatService.newConversation();
+    expect(chatService.messages, isEmpty);
+    expect(chatService.activeConversationId, isNot(firstId));
+
+    await chatService.sendMessage('Hola desde la segunda');
+    final secondId = chatService.activeConversationId;
+    expect(chatService.conversations.length, 2);
+
+    await chatService.selectConversation(firstId!);
+    expect(
+      chatService.messages.map((message) => message.text),
+      contains('Hola desde la primera'),
+    );
+    expect(
+      chatService.messages.map((message) => message.text),
+      isNot(contains('Hola desde la segunda')),
+    );
+
+    await chatService.deleteConversation(firstId);
+    expect(
+      chatService.conversations
+          .any((conversation) => conversation.id == firstId),
+      isFalse,
+    );
+    expect(chatService.activeConversationId, secondId);
+    expect(
+      chatService.messages.map((message) => message.text),
+      contains('Hola desde la segunda'),
     );
   });
 

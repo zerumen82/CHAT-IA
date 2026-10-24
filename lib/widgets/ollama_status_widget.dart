@@ -58,32 +58,32 @@ class OllamaQuickConnect extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          Row(
+          // Wrap y no Row: en ventanas estrechas los dos botones no caben en
+          // una línea y desbordarían la tarjeta.
+          Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    context.read<ChatServiceOllama>().loadModels();
-                  },
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('Reintentar'),
-                ),
+              OutlinedButton.icon(
+                onPressed: () {
+                  context.read<ChatServiceOllama>().loadModels();
+                },
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('Reintentar'),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const OllamaManagerScreen(),
-                        fullscreenDialog: true,
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.settings, size: 18),
-                  label: const Text('Configurar'),
-                ),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const OllamaManagerScreen(),
+                      fullscreenDialog: true,
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.settings, size: 18),
+                label: const Text('Configurar'),
               ),
             ],
           ),

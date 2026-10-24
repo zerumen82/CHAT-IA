@@ -61,6 +61,51 @@ Uint8List _buildTestWorkbook() {
   return ZipEncoder().encodeBytes(archive);
 }
 
+Uint8List _buildTestDocx() {
+  final archive = Archive();
+  archive.addFile(
+    ArchiveFile.string(
+      'word/document.xml',
+      '<?xml version="1.0" encoding="UTF-8"?>'
+          '<w:document '
+          'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+          '<w:body>'
+          '<w:p><w:r><w:t>Hola </w:t></w:r><w:r><w:t>mundo</w:t></w:r></w:p>'
+          '<w:tbl><w:tr>'
+          '<w:tc><w:p><w:r><w:t>Producto</w:t></w:r></w:p></w:tc>'
+          '<w:tc><w:p><w:r><w:t>Precio</w:t></w:r></w:p></w:tc>'
+          '</w:tr></w:tbl>'
+          '<w:p><w:r><w:t>Fin del documento</w:t></w:r></w:p>'
+          '</w:body></w:document>',
+    ),
+  );
+  return ZipEncoder().encodeBytes(archive);
+}
+
+Uint8List _buildTestPresentation() {
+  final archive = Archive();
+
+  void addSlide(int number, List<String> lines) {
+    final body =
+        lines.map((line) => '<a:p><a:r><a:t>$line</a:t></a:r></a:p>').join();
+    archive.addFile(
+      ArchiveFile.string(
+        'ppt/slides/slide$number.xml',
+        '<?xml version="1.0" encoding="UTF-8"?>'
+            '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+            'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+            '<p:cSld><p:spTree><p:sp><p:txBody>$body</p:txBody></p:sp>'
+            '</p:spTree></p:cSld></p:sld>',
+      ),
+    );
+  }
+
+  addSlide(2, ['Cierre']);
+  addSlide(1, ['Ventas 2024', 'Crecemos un 20%']);
+
+  return ZipEncoder().encodeBytes(archive);
+}
+
 Uint8List _buildTestPdf() {
   final document = PdfDocument();
   final page = document.pages.add();
@@ -119,13 +164,97 @@ void main() {
   });
 
   test('rejects formats that are not supported', () async {
-    final file = File('${temporaryDirectory.path}/contrato.docx');
+    final file = File('${temporaryDirectory.path}/programa.exe');
     await file.writeAsBytes(utf8.encode('contenido'));
 
     final document = await DocumentService.extract(file.path);
 
     expect(document.isReady, isFalse);
     expect(document.error, contains('Formato no admitido'));
+    expect(document.error, contains('Word'));
+  });
+
+  test('extracts paragraphs and table rows from DOCX', () async {
+    final file = File('${temporaryDirectory.path}/informe.docx');
+    await file.writeAsBytes(_buildTestDocx());
+
+    final document = await DocumentService.extract(file.path);
+
+    expect(document.error, isNull);
+    expect(document.kind, DocumentKind.text);
+    expect(document.text, contains('Hola mundo'));
+    expect(document.text, contains('Producto | Precio'));
+    expect(document.text, contains('Fin del documento'));
+  });
+
+  test('extracts slide text from PPTX in slide order', () async {
+    final file = File('${temporaryDirectory.path}/charla.pptx');
+    await file.writeAsBytes(_buildTestPresentation());
+
+    final document = await DocumentService.extract(file.path);
+
+    expect(document.error, isNull);
+    expect(document.kind, DocumentKind.presentation);
+    expect(document.text, contains('Diapositiva 1:'));
+    expect(document.text, contains('Ventas 2024'));
+    expect(document.text, contains('Diapositiva 2:'));
+    expect(document.text, contains('Cierre'));
+  });
+
+  test('extracts visible text from HTML without scripts or styles', () async {
+    final file = File('${temporaryDirectory.path}/pagina.html');
+    await file.writeAsString(
+      '<html><head><title>Oculto</title><style>.x{color:red}</style></head>'
+      '<body><h1>Informe</h1><p>Hola <b>mundo</b></p>'
+      '<script>alert(\'x\')</script></body></html>',
+    );
+
+    final document = await DocumentService.extract(file.path);
+
+    expect(document.error, isNull);
+    expect(document.kind, DocumentKind.text);
+    expect(document.text, contains('Informe'));
+    expect(document.text, contains('Hola mundo'));
+    expect(document.text, isNot(contains('alert')));
+    expect(document.text, isNot(contains('color:red')));
+  });
+
+  test('extracts element text from XML and decodes entities', () async {
+    final file = File('${temporaryDirectory.path}/catalogo.xml');
+    await file.writeAsString(
+      '<?xml version="1.0"?><catalogo><producto>'
+      '<nombre>Manzana &amp; pera</nombre><precio>1.5</precio>'
+      '</producto></catalogo>',
+    );
+
+    final document = await DocumentService.extract(file.path);
+
+    expect(document.error, isNull);
+    expect(document.text, contains('Manzana & pera'));
+    expect(document.text, contains('1.5'));
+    expect(document.text, isNot(contains('<nombre>')));
+  });
+
+  test('formats TSV rows like a spreadsheet', () async {
+    final file = File('${temporaryDirectory.path}/personas.tsv');
+    await file.writeAsString('Nombre\tEdad\nAna\t30');
+
+    final document = await DocumentService.extract(file.path);
+
+    expect(document.error, isNull);
+    expect(document.kind, DocumentKind.spreadsheet);
+    expect(document.text, contains('Fila 1: Nombre | Edad'));
+    expect(document.text, contains('Fila 2: Ana | 30'));
+  });
+
+  test('formats CSV rows and respects quoted separators', () async {
+    final file = File('${temporaryDirectory.path}/clientes.csv');
+    await file.writeAsString('Nombre,Ciudad\n"Perez, Ana",Madrid');
+
+    final document = await DocumentService.extract(file.path);
+
+    expect(document.text, contains('Fila 1: Nombre | Ciudad'));
+    expect(document.text, contains('Fila 2: Perez, Ana | Madrid'));
   });
 
   test('extracts shared strings, inline strings and numbers from XLSX',
@@ -161,6 +290,43 @@ void main() {
     expect(document.error, isNull);
     expect(document.kind, DocumentKind.pdf);
     expect(document.text, contains('Hello LightChat'));
+  });
+
+  test('reports how much of the context budget documents consume', () {
+    final documents = [
+      DocumentAttachment(
+        path: 'a.txt',
+        name: 'a.txt',
+        kind: DocumentKind.text,
+        sizeBytes: 10,
+        text: List.filled(120, 'A').join(),
+        originalChars: 120,
+      ),
+      DocumentAttachment(
+        path: 'b.txt',
+        name: 'b.txt',
+        kind: DocumentKind.text,
+        sizeBytes: 10,
+        text: List.filled(80, 'B').join(),
+        originalChars: 80,
+      ),
+      const DocumentAttachment(
+        path: 'c.txt',
+        name: 'fallido.txt',
+        kind: DocumentKind.text,
+        sizeBytes: 0,
+        error: 'No se pudo leer',
+      ),
+    ];
+
+    expect(
+      DocumentService.contextCharsFor(documents, maxChars: 500),
+      200,
+    );
+    expect(
+      DocumentService.contextCharsFor(documents, maxChars: 150),
+      150,
+    );
   });
 
   test('builds the attachment context within the character budget', () {

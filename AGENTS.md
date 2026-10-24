@@ -1,7 +1,7 @@
 # AGENTS.md
 
 > Guía para agentes de IA y nuevos colaboradores que trabajen en **LightChat**.
-> Última revisión: 2026-10-17. El estado persistente (deuda, decisiones, historial) vive en [`MEMORY.md`](MEMORY.md).
+> Última revisión: 2026-10-24. El estado persistente (deuda, decisiones, historial) vive en [`MEMORY.md`](MEMORY.md).
 
 ---
 
@@ -9,7 +9,7 @@
 
 LightChat es una **aplicación de escritorio hecha en Flutter** con un chat ligero y privado para **LLMs locales ejecutados con [Ollama](https://ollama.com)**. Todo corre en la máquina del usuario (API de Ollama en `http://localhost:11434`): sin nube, sin cuentas, sin credenciales.
 
-- **Stack:** Flutter 3.41.x stable · Dart SDK `>=3.0.0 <4.0.0` · estado con `provider` · HTTP con `http` (streaming) · archivos con `desktop_drop` + `file_selector`
+- **Stack:** Flutter 3.47.8 stable (Dart 3.13.7) · Dart SDK `>=3.0.0 <4.0.0` · estado con `provider` · HTTP con `http` (streaming) · archivos con `desktop_drop` + `file_selector` · Markdown con `flutter_markdown_plus`
 - **Plataformas:** Windows (principal; ventana maximizada vía `window_manager`), macOS y Linux. `android/`, `ios/`, `web/` existen por plantilla, no son foco.
 - **Idioma:** UI y documentación en español; identificadores de código en inglés.
 - **Historia:** inició como herramienta de programación → chat con vLLM (feb-2026) → **migrado a Ollama el 2026-03-02** (commit `63d2175`). La migración está *terminada*; **no reintroducir vLLM ni LM Studio**.
@@ -20,8 +20,8 @@ Ejecutar siempre desde la raíz del repo (`lightchat/`):
 
 ```bash
 flutter pub get        # dependencias (obligatorio en entorno limpio)
-flutter analyze        # lints — línea base actual: 0 errores, 8 warnings, 37 info (~62 s)
-flutter test           # ⚠ el único test actual FALLA (es plantilla obsoleta; ver §7)
+flutter analyze        # lints — línea base actual: 0 incidencias (~40 s)
+flutter test           # 58 pruebas (todas deben pasar; ver §7)
 flutter run            # desarrollo con hot-restart
 flutter build windows  # release Windows (también: macos | linux)
 ```
@@ -47,19 +47,21 @@ lib/
 ├── main.dart                    # entrada: MyApp (línea 34), MultiProvider, temas, ventana Windows
 ├── config/
 │   └── vllm_config.dart         # clase OllamaConfig (¡config ACTIVA!) + typedef VllmConfig = OllamaConfig
-├── models/                      # local_model, message, document_attachment
+├── models/                      # local_model, message, document_attachment, conversation
 ├── screens/
 │   ├── chat_screen.dart         # pantalla principal de chat (home)
 │   └── ollama_manager_screen.dart   # gestor de modelos/estado Ollama
 ├── services/                    # lógica de negocio y transporte HTTP
 │   ├── ollama_service.dart          # cliente API Ollama (singleton .instance) ← servicio principal
-│   ├── chat_service_ollama.dart     # orquestación del chat con streaming, parada y versiones de mensajes
-│   ├── context_service.dart         # historial conversacional + detección de 8 idiomas
+│   ├── chat_service_ollama.dart     # orquestación del chat con streaming, parada, regenerar/editar y conversaciones
+│   ├── conversation_service.dart    # índice y mensajes de cada conversación en SharedPreferences
+│   ├── context_service.dart         # migración del historial antiguo + detección de 8 idiomas
 │   ├── model_catalog_service.dart   # catálogo online de modelos (con caché)
 │   ├── hardware_detector_service.dart # RAM/VRAM para recomendaciones (solo tests)
-│   ├── document_service.dart        # texto de PDF/XLSX/CSV/TXT para el chat
+│   ├── document_service.dart        # texto de PDF/XLSX/DOCX/PPTX/HTML/XML/CSV/TSV/TXT
 │   └── theme_service.dart           # tema claro/oscuro
-└── widgets/                     # chat_input, message_bubble, image_*, model_*,
+└── widgets/                     # chat_input, message_bubble, assistant_markdown,
+                                 # conversation_sidebar, document_text_dialog, model_*,
                                  # ollama_status_widget, capsule_icon, model_capability_icons…
 ```
 
@@ -73,7 +75,7 @@ Los widgets **no** hacen HTTP directo; los services **no** dibujan UI.
 | Dónde | Qué contiene | Notas |
 |---|---|---|
 | `lib/config/vllm_config.dart` → `OllamaConfig` | `serverUrl` (`http://localhost:11434`, mutable), `defaultPort`, `timeoutSeconds` 120, `maxContextTokens` 8192 (fijo), `maxResponseTokens` 2048, `defaultTemperature` 0.7, `documentTemperature` 0.2, `preferredModels`, `multimodalModels` (`llava`…), `isUncensoredModel`, `isThinkingModel` | Aunque el archivo se llama `vllm_config`, es la config vigente de Ollama; el `typedef VllmConfig = OllamaConfig` mantiene compatibilidad de nombres. **No** volver a hacer `num_ctx` condicional: Ollama recarga el modelo |
-| `SharedPreferences` (prefs del usuario) | claves reales en uso: `ollama_host`, `installed_models`, `model_catalog_cache`, `model_catalog_last_update`, `user_language` | leídas/escritas desde `ollama_service`, `model_manager_service`, `model_catalog_service`, `context_service`, `theme_service` |
+| `SharedPreferences` (prefs del usuario) | claves reales en uso: `ollama_host`, `installed_models`, `model_catalog_cache`, `model_catalog_last_update`, `user_language`, `lightchat_conversations_v1` (índice), `lightchat_active_conversation_v1`, `lightchat_conversation_messages_v1_<id>`, `chat_messages` (historial antiguo, solo migración) | leídas/escritas desde `ollama_service`, `model_catalog_service`, `context_service`, `conversation_service`, `theme_service` |
 
 ## 5. Common tasks (¿Dónde tocar para cada tarea?)
 
@@ -83,7 +85,11 @@ Los widgets **no** hacen HTTP directo; los services **no** dibujan UI.
 | Cambiar URL o puerto de Ollama | `OllamaConfig.serverUrl` + clave `ollama_host` (aplicada en `ollama_service.dart`) |
 | Añadir o modificar un endpoint de Ollama | `lib/services/ollama_service.dart` |
 | UI del chat (burbujas, input, adjuntar imágenes) | `lib/screens/chat_screen.dart`, `lib/widgets/chat_input.dart`, `message_bubble.dart`, `image_*` |
-| Documentos adjuntos (arrastrar y soltar, extracción PDF/XLSX) | `lib/services/document_service.dart`, `lib/models/document_attachment.dart`, `lib/widgets/chat_input.dart`, `lib/screens/chat_screen.dart` (`DropTarget`) |
+| Documentos adjuntos (arrastrar y soltar, extracción PDF/XLSX/DOCX/PPTX/HTML/XML/CSV/TSV) | `lib/services/document_service.dart`, `lib/models/document_attachment.dart`, `lib/widgets/chat_input.dart`, `lib/screens/chat_screen.dart` (`DropTarget`) |
+| Ver el texto enviado de un documento / medidor de contexto | `lib/widgets/document_text_dialog.dart`, `ChatInput._buildContextMeter`, `DocumentService.contextCharsFor` |
+| Respuestas en Markdown y bloques de código copiables | `lib/widgets/assistant_markdown.dart` (+ `flutter_markdown_plus` en `pubspec.yaml`) |
+| Conversaciones guardadas (barra lateral, renombrar, borrar) | `lib/services/conversation_service.dart`, `lib/models/conversation.dart`, `lib/widgets/conversation_sidebar.dart`, `ChatServiceOllama` (`newConversation`, `selectConversation`, `deleteConversation`) |
+| Regenerar / editar un mensaje | `ChatServiceOllama.regenerateLastResponse`, `editAndResend`, `lib/widgets/message_bubble.dart` (`onRegenerate`, `onEdit`) |
 | Detección e indicador de modelos sin censura | `lib/config/vllm_config.dart` (`isUncensoredModel`), `lib/widgets/model_selector.dart` |
 | Catálogo y descarga de modelos | `model_catalog_service.dart`, `screens/ollama_manager_screen.dart`, `widgets/model_download_card.dart` |
 | Detección de idioma / historial / contexto | `lib/services/context_service.dart` (`detectLanguage`, 8 idiomas) |
@@ -103,13 +109,13 @@ Los widgets **no** hacen HTTP directo; los services **no** dibujan UI.
 
 ## 7. Testing & Verification (Pruebas y verificación mínima)
 
-**Estado actual:** todas las suites pasan (37 pruebas): chat/streaming, reintento, documentos (incluidas fechas de Excel), idioma, modelos sin censura, recomendaciones de hardware, temas y pantalla real de chat. `test/widget_test.dart` ya no es la plantilla de Flutter.
+**Estado actual:** todas las suites pasan (58 pruebas): chat/streaming, reintento, regenerar/editar, conversaciones, documentos (incluidas fechas de Excel y DOCX/PPTX/HTML/XML/TSV), idioma, modelos sin censura, recomendaciones de hardware, temas, Markdown, visor de documentos y pantalla real de chat. `test/widget_test.dart` ya no es la plantilla de Flutter.
 
 Checklist de verificación antes de dar un cambio por terminado:
 
 1. `flutter pub get` (si es entorno limpio)
 2. `flutter analyze` → **cero errores** (warnings/info: no aumentarlos; ideal: reducir)
-3. `flutter test` → deben pasar todos (hoy 37, incluidos documentos, idioma, reintento y modelos sin censura); **cualquier test nuevo debe pasar**
+3. `flutter test` → deben pasar todos (hoy 58, incluidos documentos, idioma, reintento, conversaciones y Markdown); **cualquier test nuevo debe pasar**
 4. Prueba manual con Ollama corriendo: `flutter run` → enviar un mensaje y ver streaming + comprobar el indicador de estado
 
 Prioridad de cobertura futura (hoy 0 tests reales): lógica pura en `context_service`, parsing/caché de `model_catalog_service`, `hardware_detector_service`.

@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:lightchat/models/document_attachment.dart';
 import 'package:lightchat/models/message.dart';
+import 'package:lightchat/widgets/assistant_markdown.dart';
+import 'package:lightchat/widgets/document_text_dialog.dart';
 
 /// Burbuja de mensaje unificada: texto + imágenes + acciones
 class MessageBubble extends StatelessWidget {
@@ -11,12 +13,20 @@ class MessageBubble extends StatelessWidget {
   final VoidCallback? onCopy;
   final VoidCallback? onImageTap;
 
+  /// Vuelve a pedir esta respuesta al modelo (solo en el último mensaje).
+  final VoidCallback? onRegenerate;
+
+  /// Abre el diálogo para editar este mensaje del usuario y reenviarlo.
+  final VoidCallback? onEdit;
+
   const MessageBubble({
     super.key,
     required this.message,
     this.onRetry,
     this.onCopy,
     this.onImageTap,
+    this.onRegenerate,
+    this.onEdit,
   });
 
   @override
@@ -89,16 +99,20 @@ class MessageBubble extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(
-                            message.text,
-                            style: TextStyle(
-                              color: isUser
-                                  ? colorScheme.onPrimaryContainer
-                                  : colorScheme.onSurface,
-                              fontSize: 16,
-                              height: 1.5,
+                          if (isUser)
+                            Text(
+                              message.text,
+                              style: TextStyle(
+                                color: colorScheme.onPrimaryContainer,
+                                fontSize: 16,
+                                height: 1.5,
+                              ),
+                            )
+                          else
+                            AssistantMarkdown(
+                              text: message.text,
+                              textColor: colorScheme.onSurface,
                             ),
-                          ),
                           const SizedBox(height: 8),
                           _buildFooter(context),
                         ],
@@ -230,40 +244,54 @@ class MessageBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           for (final document in documents)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    _documentIcon(document.kind),
-                    size: 16,
-                    color: foregroundColor.withValues(alpha: 0.8),
-                  ),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      document.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: foregroundColor,
+            Tooltip(
+              message: 'Ver el texto que se envió al modelo',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => showDocumentTextDialog(context, document),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _documentIcon(document.kind),
+                        size: 16,
+                        color: foregroundColor.withValues(alpha: 0.8),
                       ),
-                    ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          document.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: foregroundColor,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        document.truncated
+                            ? '${document.sizeFormatted} · recortado'
+                            : document.sizeFormatted,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: foregroundColor.withValues(alpha: 0.7),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.visibility_outlined,
+                        size: 14,
+                        color: foregroundColor.withValues(alpha: 0.6),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    document.truncated
-                        ? '${document.sizeFormatted} · recortado'
-                        : document.sizeFormatted,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: foregroundColor.withValues(alpha: 0.7),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
         ],
@@ -275,6 +303,7 @@ class MessageBubble extends StatelessWidget {
     return switch (kind) {
       DocumentKind.pdf => Icons.picture_as_pdf,
       DocumentKind.spreadsheet => Icons.table_chart,
+      DocumentKind.presentation => Icons.slideshow,
       DocumentKind.text => Icons.description,
     };
   }
@@ -473,11 +502,17 @@ class MessageBubble extends StatelessWidget {
 
   Widget _buildFooter(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.end,
+    final footerColor = message.isUser
+        ? colorScheme.onPrimaryContainer.withValues(alpha: 0.8)
+        : colorScheme.onSurfaceVariant;
+
+    return Wrap(
+      alignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 2,
       children: [
-        if (!message.isUser && message.model != null) ...[
+        if (!message.isUser && message.model != null)
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
@@ -493,23 +528,39 @@ class MessageBubble extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 8),
-        ],
         Text(
           _formatTime(message.timestamp),
-          style: TextStyle(
-            fontSize: 12,
-            color: colorScheme.onSurfaceVariant,
-          ),
+          style: TextStyle(fontSize: 12, color: footerColor),
         ),
-        if (message.isError) ...[
-          const SizedBox(width: 4),
+        if (message.isError)
           Icon(
             Icons.error_outline,
             size: 14,
             color: colorScheme.error,
           ),
-        ],
+        if (!message.isUser && onRegenerate != null)
+          TextButton.icon(
+            onPressed: onRegenerate,
+            icon: const Icon(Icons.refresh, size: 14),
+            label: const Text('Regenerar'),
+            style: TextButton.styleFrom(
+              foregroundColor: colorScheme.primary,
+              minimumSize: const Size(0, 28),
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              textStyle: const TextStyle(fontSize: 12),
+            ),
+          ),
+        if (message.isUser && onEdit != null)
+          IconButton(
+            tooltip: 'Editar y reenviar',
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit_outlined, size: 14),
+            color: footerColor,
+            padding: const EdgeInsets.all(2),
+            constraints: const BoxConstraints(),
+            visualDensity: VisualDensity.compact,
+          ),
       ],
     );
   }

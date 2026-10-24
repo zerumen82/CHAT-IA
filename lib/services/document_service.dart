@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:html/dom.dart' as dom;
+import 'package:html/parser.dart' as html_parser;
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:xml/xml.dart';
 
@@ -39,6 +41,12 @@ class DocumentService {
     'xlsx',
     'xlsm',
     'csv',
+    'tsv',
+    'docx',
+    'pptx',
+    'html',
+    'htm',
+    'xml',
     'txt',
     'md',
     'json',
@@ -46,6 +54,10 @@ class DocumentService {
     'yaml',
     'yml',
   };
+
+  /// Texto para la UI con los formatos admitidos.
+  static const String supportedFormatsLabel =
+      'PDF, Word, Excel, PowerPoint, CSV/TSV, HTML, XML, TXT, MD, JSON o LOG';
 
   static String extensionOf(String path) {
     final name = path.split(RegExp(r'[/\\]')).last;
@@ -65,7 +77,8 @@ class DocumentService {
   static DocumentKind kindOf(String path) {
     return switch (extensionOf(path)) {
       'pdf' => DocumentKind.pdf,
-      'xlsx' || 'xlsm' || 'csv' => DocumentKind.spreadsheet,
+      'xlsx' || 'xlsm' || 'csv' || 'tsv' => DocumentKind.spreadsheet,
+      'pptx' => DocumentKind.presentation,
       _ => DocumentKind.text,
     };
   }
@@ -90,9 +103,7 @@ class DocumentService {
         );
 
     if (!isSupportedDocument(name)) {
-      return failure(
-        'Formato no admitido. Usa PDF, XLSX, CSV, TXT, MD, JSON o LOG.',
-      );
+      return failure('Formato no admitido. Usa $supportedFormatsLabel.');
     }
 
     try {
@@ -118,6 +129,25 @@ class DocumentService {
         case 'xlsm':
           text = _extractXlsx(bytes);
           break;
+        case 'docx':
+          text = _extractDocx(bytes);
+          break;
+        case 'pptx':
+          text = _extractPptx(bytes);
+          break;
+        case 'html':
+        case 'htm':
+          text = _extractHtml(bytes);
+          break;
+        case 'xml':
+          text = _extractXml(bytes);
+          break;
+        case 'csv':
+          text = _formatDelimited(_decodeText(bytes), ',');
+          break;
+        case 'tsv':
+          text = _formatDelimited(_decodeText(bytes), '\t');
+          break;
         default:
           text = _decodeText(bytes);
       }
@@ -131,7 +161,9 @@ class DocumentService {
           sizeBytes: sizeBytes,
           error: extension == 'pdf'
               ? 'El PDF no contiene texto seleccionable (puede ser un escaneo).'
-              : 'El documento está vacío o no contiene texto legible.',
+              : extension == 'pptx'
+                  ? 'Las diapositivas solo contienen imágenes o no tienen texto.'
+                  : 'El documento está vacío o no contiene texto legible.',
         );
       }
 
@@ -182,6 +214,23 @@ class DocumentService {
     final omitted = text.length - cut;
     final marker = '\n[… recortado: $omitted caracteres omitidos]';
     return '${text.substring(0, cut).trimRight()}$marker';
+  }
+
+  /// Caracteres del presupuesto de contexto que ocuparán [documents].
+  ///
+  /// Simula el mismo recorte que [buildAttachmentContext] sin construir el
+  /// bloque completo, para que la UI pueda avisar antes de enviar.
+  static int contextCharsFor(
+    List<DocumentAttachment> documents, {
+    int maxChars = maxTotalChars,
+  }) {
+    var remaining = maxChars;
+    for (final document in documents.where((document) => document.isReady)) {
+      if (remaining <= 0) break;
+      final usable = truncateAtLineBreak(document.text!, remaining);
+      remaining -= usable.length;
+    }
+    return maxChars - remaining;
   }
 
   /// Construye el bloque de contexto que se añade al mensaje del usuario.
@@ -242,6 +291,366 @@ class DocumentService {
     } finally {
       document.dispose();
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // DOCX / PPTX (ZIP + XML de Office Open XML)
+  // ---------------------------------------------------------------------------
+
+  static Map<String, ArchiveFile> _zipEntries(Uint8List bytes) {
+    final archive = ZipDecoder().decodeBytes(bytes);
+    final entries = <String, ArchiveFile>{};
+    for (final file in archive.files) {
+      if (file.isFile) {
+        entries[file.name.replaceAll('\\', '/')] = file;
+      }
+    }
+    return entries;
+  }
+
+  static String? _zipText(Map<String, ArchiveFile> entries, String path) {
+    final content = entries[path]?.readBytes();
+    if (content == null) {
+      return null;
+    }
+    return utf8.decode(content, allowMalformed: true);
+  }
+
+  /// Elementos por nombre local: OOXML usa prefijos (`w:p`, `a:p`) y
+  /// `findAllElements('p')` no los encontraría.
+  static Iterable<XmlElement> _elementsNamed(
+    XmlElement element,
+    String localName,
+  ) {
+    return element.descendants
+        .whereType<XmlElement>()
+        .where((child) => child.name.local == localName);
+  }
+
+  static String _extractDocx(Uint8List bytes) {
+    final entries = _zipEntries(bytes);
+    final xml = _zipText(entries, 'word/document.xml');
+    if (xml == null) {
+      throw const FormatException(
+        'El archivo no parece un documento Word válido.',
+      );
+    }
+
+    final document = XmlDocument.parse(xml);
+    final bodies = _elementsNamed(document.rootElement, 'body');
+    final body = bodies.isEmpty ? document.rootElement : bodies.first;
+    final buffer = StringBuffer();
+    _writeDocxBlocks(body, buffer);
+    return buffer.toString();
+  }
+
+  static void _writeDocxBlocks(XmlElement element, StringBuffer buffer) {
+    for (final child in element.children.whereType<XmlElement>()) {
+      switch (child.name.local) {
+        case 'p':
+          final line = StringBuffer();
+          _writeDocxInline(child, line);
+          final text = line.toString().trim();
+          if (text.isNotEmpty) {
+            buffer.writeln(text);
+          }
+          break;
+        case 'tbl':
+          for (final row in _elementsNamed(child, 'tr')) {
+            final cells = <String>[];
+            for (final cell in _elementsNamed(row, 'tc')) {
+              final value = _elementsNamed(cell, 't')
+                  .map((text) => text.innerText)
+                  .join(' ')
+                  .replaceAll(RegExp(r'\s+'), ' ')
+                  .trim();
+              if (value.isNotEmpty) {
+                cells.add(value);
+              }
+            }
+            if (cells.isNotEmpty) {
+              buffer.writeln(cells.join(' | '));
+            }
+          }
+          break;
+        default:
+          _writeDocxBlocks(child, buffer);
+      }
+    }
+  }
+
+  static void _writeDocxInline(XmlNode node, StringBuffer buffer) {
+    for (final child in node.children) {
+      if (child is! XmlElement) continue;
+      switch (child.name.local) {
+        case 't':
+          buffer.write(child.innerText);
+          break;
+        case 'tab':
+          buffer.write('\t');
+          break;
+        case 'br':
+        case 'cr':
+          buffer.write('\n');
+          break;
+        case 'delText':
+        case 'instrText':
+          // Texto tachado o instrucciones de campo: no forma parte del texto.
+          break;
+        default:
+          _writeDocxInline(child, buffer);
+      }
+    }
+  }
+
+  static final RegExp _slidePathPattern =
+      RegExp(r'^ppt/slides/slide(\d+)\.xml$');
+
+  static String _extractPptx(Uint8List bytes) {
+    final entries = _zipEntries(bytes);
+    final slides = entries.keys
+        .where((path) => _slidePathPattern.hasMatch(path))
+        .toList()
+      ..sort((first, second) {
+        final firstNumber =
+            int.tryParse(_slidePathPattern.firstMatch(first)!.group(1)!) ?? 0;
+        final secondNumber =
+            int.tryParse(_slidePathPattern.firstMatch(second)!.group(1)!) ?? 0;
+        return firstNumber.compareTo(secondNumber);
+      });
+
+    if (slides.isEmpty) {
+      throw const FormatException(
+        'El archivo no parece una presentación PowerPoint válida.',
+      );
+    }
+
+    final buffer = StringBuffer();
+    var slideNumber = 0;
+    for (final slidePath in slides) {
+      final xml = _zipText(entries, slidePath);
+      if (xml == null) continue;
+
+      final document = XmlDocument.parse(xml);
+      final lines = <String>[];
+      for (final paragraph in _elementsNamed(document.rootElement, 'p')) {
+        final text = _elementsNamed(paragraph, 't')
+            .map((element) => element.innerText)
+            .join()
+            .trim();
+        if (text.isNotEmpty) {
+          lines.add(text);
+        }
+      }
+
+      if (lines.isEmpty) continue;
+      slideNumber++;
+      buffer.writeln('Diapositiva $slideNumber:');
+      for (final line in lines) {
+        buffer.writeln(line);
+      }
+      buffer.writeln();
+    }
+    return buffer.toString();
+  }
+
+  // ---------------------------------------------------------------------------
+  // HTML / XML
+  // ---------------------------------------------------------------------------
+
+  static const Set<String> _htmlBlockTags = {
+    'address',
+    'article',
+    'aside',
+    'blockquote',
+    'dd',
+    'div',
+    'dl',
+    'dt',
+    'figcaption',
+    'figure',
+    'footer',
+    'form',
+    'h1',
+    'h2',
+    'h3',
+    'h4',
+    'h5',
+    'h6',
+    'header',
+    'hr',
+    'li',
+    'main',
+    'nav',
+    'ol',
+    'p',
+    'pre',
+    'section',
+    'table',
+    'tr',
+    'ul',
+  };
+
+  static String _extractHtml(Uint8List bytes) {
+    final document = html_parser.parse(_decodeText(bytes));
+    for (final element
+        in document.querySelectorAll('script, style, noscript, head, svg')) {
+      element.remove();
+    }
+
+    final buffer = StringBuffer();
+    final root = document.body ?? document.documentElement;
+    if (root != null) {
+      _writeHtml(root, buffer);
+    }
+    return buffer.toString();
+  }
+
+  static void _writeHtml(dom.Node node, StringBuffer buffer) {
+    if (node is dom.Text) {
+      final text = node.text.replaceAll(RegExp(r'\s+'), ' ');
+      if (text.trim().isNotEmpty) {
+        buffer.write(text);
+      }
+      return;
+    }
+    if (node is! dom.Element) return;
+
+    final tag = node.localName ?? '';
+    if (tag == 'br') {
+      buffer.write('\n');
+      return;
+    }
+
+    final isBlock = _htmlBlockTags.contains(tag);
+    if (isBlock) buffer.write('\n');
+    if (tag == 'li') buffer.write('• ');
+
+    for (final child in node.nodes) {
+      _writeHtml(child, buffer);
+    }
+
+    if (tag == 'td' || tag == 'th') buffer.write(' | ');
+    if (isBlock) buffer.write('\n');
+  }
+
+  static String _extractXml(Uint8List bytes) {
+    var text = _decodeText(bytes);
+    text = text
+        .replaceAll(RegExp(r'<!--[\s\S]*?-->'), ' ')
+        .replaceAll(RegExp(r'<\?[\s\S]*?\?>'), ' ')
+        .replaceAll(
+          RegExp(r'<(script|style)[\s\S]*?</\1>', caseSensitive: false),
+          ' ',
+        )
+        .replaceAll(RegExp(r'<[^>]*>'), '\n');
+    return _decodeXmlEntities(text);
+  }
+
+  static String _decodeXmlEntities(String text) {
+    return text.replaceAllMapped(
+      RegExp(r'&(#x?[0-9a-fA-F]+|[a-zA-Z]+);'),
+      (match) {
+        final entity = match.group(1)!;
+        if (entity.startsWith('#x') || entity.startsWith('#X')) {
+          final code = int.tryParse(entity.substring(2), radix: 16);
+          return code == null ? match.group(0)! : String.fromCharCode(code);
+        }
+        if (entity.startsWith('#')) {
+          final code = int.tryParse(entity.substring(1));
+          return code == null ? match.group(0)! : String.fromCharCode(code);
+        }
+        return switch (entity) {
+          'amp' => '&',
+          'lt' => '<',
+          'gt' => '>',
+          'quot' => '"',
+          'apos' => "'",
+          'nbsp' => ' ',
+          _ => match.group(0)!,
+        };
+      },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // CSV / TSV
+  // ---------------------------------------------------------------------------
+
+  /// Presenta CSV y TSV como filas (`Fila 2: Ana | 12`), igual que un XLSX,
+  /// en lugar de una línea larga de separadores.
+  static String _formatDelimited(String text, String delimiter) {
+    final rows = _splitDelimitedRows(text, delimiter);
+    if (rows.isEmpty) return text;
+
+    final buffer = StringBuffer();
+    for (var index = 0; index < rows.length; index++) {
+      if (index >= maxRowsPerSheet) {
+        buffer.writeln('[Tabla recortada: máximo de $maxRowsPerSheet filas]');
+        break;
+      }
+      final cells = rows[index]
+          .map((cell) => cell.trim())
+          .take(maxColumnsPerRow)
+          .toList();
+      if (cells.every((cell) => cell.isEmpty)) continue;
+      buffer.writeln('Fila ${index + 1}: ${cells.join(' | ')}');
+    }
+    return buffer.toString();
+  }
+
+  /// Divide CSV/TSV respetando las comillas dobles y los saltos entre comillas.
+  static List<List<String>> _splitDelimitedRows(
+    String text,
+    String delimiter,
+  ) {
+    final rows = <List<String>>[];
+    var row = <String>[];
+    final cell = StringBuffer();
+    var inQuotes = false;
+    final separator = delimiter.codeUnitAt(0);
+
+    void endRow() {
+      row.add(cell.toString());
+      rows.add(row);
+      row = <String>[];
+      cell.clear();
+    }
+
+    for (var index = 0; index < text.length; index++) {
+      final unit = text.codeUnitAt(index);
+      if (inQuotes) {
+        if (unit == 34) {
+          final isEscapedQuote =
+              index + 1 < text.length && text.codeUnitAt(index + 1) == 34;
+          if (isEscapedQuote) {
+            cell.write('"');
+            index++;
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          cell.writeCharCode(unit);
+        }
+        continue;
+      }
+
+      if (unit == 34) {
+        inQuotes = true;
+      } else if (unit == separator) {
+        row.add(cell.toString());
+        cell.clear();
+      } else if (unit == 10) {
+        endRow();
+      } else if (unit != 13) {
+        cell.writeCharCode(unit);
+      }
+    }
+
+    if (cell.isNotEmpty || row.isNotEmpty) {
+      endRow();
+    }
+    return rows;
   }
 
   // ---------------------------------------------------------------------------
@@ -587,6 +996,8 @@ class DocumentService {
         .replaceAll('\r', '\n')
         .replaceAll('\t', ' ')
         .replaceAll(RegExp(r'[ ]{2,}'), ' ')
+        .replaceAll(RegExp(r'[ ]+\n'), '\n')
+        .replaceAll(RegExp(r'\n[ ]+'), '\n')
         .replaceAll(RegExp(r'\n{3,}'), '\n\n')
         .trim();
   }

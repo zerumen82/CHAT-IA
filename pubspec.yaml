@@ -21,15 +21,19 @@ dependencies:
   # Documentos (arrastrar y soltar, selector de archivos, PDF, Excel)
   desktop_drop: ^0.8.4
   file_selector: ^1.0.3
-  syncfusion_flutter_pdf: ^30.2.5
+  syncfusion_flutter_pdf: ^35.1.41
   archive: ^4.0.7
-  xml: ^6.6.1
+  xml: ^7.1.0
   
   # Imágenes
   image_picker: ^1.0.4
+
+  # Markdown de las respuestas
+  flutter_markdown_plus: ^1.0.12
+  markdown: ^7.3.1
   
   # Ventana
-  window_manager: ^0.3.7
+  window_manager: ^0.5.2
   
   # Hardware
   system_info2: ^4.0.0

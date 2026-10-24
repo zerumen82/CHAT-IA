@@ -2,6 +2,7 @@
 enum DocumentKind {
   pdf,
   spreadsheet,
+  presentation,
   text,
 }
 

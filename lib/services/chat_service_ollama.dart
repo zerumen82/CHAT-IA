@@ -4,9 +4,11 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import '../config/vllm_config.dart';
+import '../models/conversation.dart';
 import '../models/document_attachment.dart';
 import '../models/message.dart';
 import 'context_service.dart';
+import 'conversation_service.dart';
 import 'document_service.dart';
 import 'ollama_service.dart';
 
@@ -43,6 +45,12 @@ class ChatServiceOllama with ChangeNotifier {
   String _userLanguage = 'español';
   String get userLanguage => _userLanguage;
 
+  // Conversaciones guardadas
+  final List<ConversationSummary> _conversations = [];
+  List<ConversationSummary> get conversations => _conversations;
+  String? _activeConversationId;
+  String? get activeConversationId => _activeConversationId;
+
   // Servicios
   final OllamaService _ollamaService = OllamaService.instance;
 
@@ -63,15 +71,185 @@ class ChatServiceOllama with ChangeNotifier {
   }
 
   Future<void> _loadContextData() async {
-    // Cargar mensajes guardados
-    final savedMessages = await ContextService.loadMessages();
-    if (savedMessages.isNotEmpty) {
-      _messages.addAll(savedMessages);
-      _notifyMessages();
-    }
-
     // Cargar idioma preferido
     _userLanguage = await ContextService.loadUserLanguage();
+
+    final savedConversations = await ConversationService.loadIndex();
+    _conversations
+      ..clear()
+      ..addAll(savedConversations);
+
+    if (_conversations.isEmpty) {
+      // Primera vez: se migra el historial antiguo a una conversación.
+      final legacyMessages = await ContextService.loadMessages();
+      final summary = ConversationSummary(
+        id: ConversationService.newId(),
+        title: _titleFor(legacyMessages),
+        updatedAt: DateTime.now(),
+        messageCount: legacyMessages.length,
+      );
+      _conversations.add(summary);
+      _activeConversationId = summary.id;
+      _messages.addAll(legacyMessages);
+      _notifyMessages();
+      return;
+    }
+
+    final savedActiveId = await ConversationService.loadActiveId();
+    _activeConversationId =
+        _conversations.any((conversation) => conversation.id == savedActiveId)
+            ? savedActiveId
+            : _conversations.first.id;
+    final savedMessages = await ConversationService.loadMessages(
+      _activeConversationId!,
+    );
+    _messages.addAll(savedMessages);
+    _notifyMessages();
+  }
+
+  /// Título automático a partir del primer mensaje del usuario.
+  String _titleFor(List<Message> messages) {
+    String text = '';
+    for (final message in messages) {
+      if (message.isUser && message.text.trim().isNotEmpty) {
+        text = message.text.trim();
+        break;
+      }
+    }
+    if (text.isEmpty) {
+      return ConversationSummary.defaultTitle;
+    }
+    final singleLine = text.replaceAll(RegExp(r'\s+'), ' ');
+    return singleLine.length > 42
+        ? '${singleLine.substring(0, 42)}…'
+        : singleLine;
+  }
+
+  /// Mantiene el resumen de la conversación activa al día (título, fecha y
+  /// número de mensajes) y lo reordena como la más reciente.
+  void _syncActiveMeta() {
+    final activeId = _activeConversationId;
+    if (activeId == null) return;
+
+    final index = _conversations.indexWhere(
+      (conversation) => conversation.id == activeId,
+    );
+    if (index < 0) return;
+
+    final current = _conversations[index];
+    final hasUserMessage = _messages.any((message) => message.isUser);
+    final shouldTitle =
+        hasUserMessage && current.title == ConversationSummary.defaultTitle;
+
+    _conversations[index] = current.copyWith(
+      title: shouldTitle ? _titleFor(_messages) : current.title,
+      updatedAt: DateTime.now(),
+      messageCount: _messages.length,
+    );
+    _conversations.sort(
+      (first, second) => second.updatedAt.compareTo(first.updatedAt),
+    );
+  }
+
+  Future<void> _flushCurrentConversation() async {
+    final activeId = _activeConversationId;
+    if (activeId == null) return;
+    await ConversationService.flushAll(
+      activeId,
+      _messages,
+      _conversations,
+    );
+    ConversationService.cancelPendingSaves();
+  }
+
+  /// Abre una conversación nueva y vacía.
+  Future<void> newConversation() async {
+    if (_isLoading) return;
+    await _flushCurrentConversation();
+
+    final summary = ConversationSummary(
+      id: ConversationService.newId(),
+      title: ConversationSummary.defaultTitle,
+      updatedAt: DateTime.now(),
+      messageCount: 0,
+    );
+    _conversations.insert(0, summary);
+    _activeConversationId = summary.id;
+    _messages.clear();
+    _messagesVersion++;
+    await ConversationService.flushAll(
+      summary.id,
+      _messages,
+      _conversations,
+    );
+    await ConversationService.saveActiveId(summary.id);
+    notifyListeners();
+  }
+
+  /// Carga otra conversación guardada.
+  Future<void> selectConversation(String id) async {
+    if (_isLoading || id == _activeConversationId) return;
+    if (!_conversations.any((conversation) => conversation.id == id)) {
+      return;
+    }
+
+    await _flushCurrentConversation();
+    final loadedMessages = await ConversationService.loadMessages(id);
+    _activeConversationId = id;
+    _messages
+      ..clear()
+      ..addAll(loadedMessages);
+    _messagesVersion++;
+    await ConversationService.saveActiveId(id);
+    notifyListeners();
+  }
+
+  Future<void> deleteConversation(String id) async {
+    if (_isLoading) return;
+    ConversationService.cancelPendingSaves();
+    _conversations.removeWhere((conversation) => conversation.id == id);
+    await ConversationService.delete(id);
+    await ConversationService.saveIndex(_conversations);
+
+    if (_activeConversationId != id) {
+      notifyListeners();
+      return;
+    }
+
+    _activeConversationId = null;
+    _messages.clear();
+    _messagesVersion++;
+
+    if (_conversations.isEmpty) {
+      await newConversation();
+      return;
+    }
+
+    final next = _conversations.first;
+    final loadedMessages = await ConversationService.loadMessages(next.id);
+    _activeConversationId = next.id;
+    _messages.addAll(loadedMessages);
+    _messagesVersion++;
+    await ConversationService.saveActiveId(next.id);
+    notifyListeners();
+  }
+
+  Future<void> renameConversation(String id, String title) async {
+    final index = _conversations.indexWhere(
+      (conversation) => conversation.id == id,
+    );
+    final trimmed = title.trim();
+    if (index < 0 || trimmed.isEmpty) return;
+
+    _conversations[index] = _conversations[index].copyWith(
+      title: trimmed,
+      updatedAt: DateTime.now(),
+    );
+    _conversations.sort(
+      (first, second) => second.updatedAt.compareTo(first.updatedAt),
+    );
+    await ConversationService.saveIndex(_conversations);
+    notifyListeners();
   }
 
   /// Reacciona a los cambios de OllamaService (estado, modelos) sin un timer
@@ -166,17 +344,81 @@ class ChatServiceOllama with ChangeNotifier {
       return;
     }
 
-    final userMessage = _messages[userIndex];
-    final imagePaths = userMessage.images
+    await _rerunFrom(userIndex);
+  }
+
+  /// Vuelve a pedir la última respuesta al modelo, descartándola.
+  Future<void> regenerateLastResponse() async {
+    if (_isLoading || !_isConnected || _selectedModel.isEmpty) {
+      return;
+    }
+
+    final lastIndex = _messages.length - 1;
+    if (lastIndex < 0 || _messages[lastIndex].isUser) {
+      return;
+    }
+
+    final userIndex = _messages.lastIndexWhere((message) => message.isUser);
+    if (userIndex < 0) {
+      return;
+    }
+
+    await _rerunFrom(userIndex);
+  }
+
+  /// Sustituye el texto de un mensaje del usuario y vuelve a preguntar,
+  /// descartando la conversación posterior a ese mensaje.
+  Future<void> editAndResend(int index, String newText) async {
+    if (_isLoading || !_isConnected || _selectedModel.isEmpty) {
+      return;
+    }
+    if (index < 0 || index >= _messages.length) {
+      return;
+    }
+
+    final message = _messages[index];
+    final text = newText.trim();
+    if (!message.isUser || text.isEmpty) {
+      return;
+    }
+
+    if (index < _messages.length - 1) {
+      _messages.removeRange(index + 1, _messages.length);
+    }
+    _messages[index] = message.copyWith(text: text);
+    _notifyMessages();
+
+    await _sendMessage(
+      text,
+      imagePaths: _imagePathsOf(message),
+      documents: _documentsOf(message),
+      addUserMessage: false,
+    );
+  }
+
+  List<String>? _imagePathsOf(Message message) {
+    final paths = message.images
         ?.map((image) => image.localPath)
         .whereType<String>()
         .toList();
+    return paths == null || paths.isEmpty ? null : paths;
+  }
+
+  List<DocumentAttachment>? _documentsOf(Message message) {
     final documents =
-        userMessage.documents?.where((document) => document.isReady).toList();
+        message.documents?.where((document) => document.isReady).toList();
+    return documents == null || documents.isEmpty ? null : documents;
+  }
+
+  /// Reenvía el turno que empieza en [userIndex] conservando sus adjuntos.
+  Future<void> _rerunFrom(int userIndex) async {
+    final userMessage = _messages[userIndex];
+    final imagePaths = _imagePathsOf(userMessage);
+    final documents = _documentsOf(userMessage);
 
     if (userMessage.text.trim().isEmpty &&
-        (imagePaths?.isEmpty ?? true) &&
-        (documents?.isEmpty ?? true)) {
+        imagePaths == null &&
+        documents == null) {
       return;
     }
 
@@ -295,9 +537,6 @@ class ChatServiceOllama with ChangeNotifier {
     _isLoading = true;
     _stopRequested = false;
     _notifyMessages();
-
-    // Guardado diferido: el historial se escribe una sola vez al terminar.
-    ContextService.saveMessagesDebounced(_messages);
 
     final buffer = StringBuffer();
     int? streamingMessageIndex;
@@ -495,7 +734,7 @@ class ChatServiceOllama with ChangeNotifier {
       _streamCompleter = null;
       _isLoading = false;
       _stopRequested = false;
-      await ContextService.flushMessages(_messages);
+      await _flushCurrentConversation();
       _notifyMessages();
     }
   }
@@ -566,7 +805,13 @@ class ChatServiceOllama with ChangeNotifier {
   void clearMessages() {
     _messages.clear();
     _messagesVersion++;
-    ContextService.saveMessages(_messages);
+    _syncActiveMeta();
+    ConversationService.cancelPendingSaves();
+    final activeId = _activeConversationId;
+    if (activeId != null) {
+      ConversationService.saveMessages(activeId, _messages);
+      ConversationService.saveIndex(_conversations);
+    }
     notifyListeners();
   }
 
@@ -582,6 +827,12 @@ class ChatServiceOllama with ChangeNotifier {
 
   void _notifyMessages() {
     _messagesVersion++;
+    _syncActiveMeta();
+    final activeId = _activeConversationId;
+    if (activeId != null) {
+      ConversationService.saveMessagesDebounced(activeId, _messages);
+      ConversationService.saveIndexDebounced(_conversations);
+    }
     notifyListeners();
   }
 
@@ -590,6 +841,7 @@ class ChatServiceOllama with ChangeNotifier {
     _ollamaService.removeListener(_onOllamaServiceChanged);
     _streamSubscription?.cancel();
     ContextService.cancelPendingSave();
+    ConversationService.cancelPendingSaves();
     super.dispose();
   }
 }
