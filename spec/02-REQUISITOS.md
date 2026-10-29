@@ -81,3 +81,16 @@ normal, con ejecución real separada PASS. Reviewer APPROVE de código final.
 Build Windows PASS71.7s y tester independiente nativo PASS; alcance cerrado.
 Evidencia y límites en MEMORY.md §9 y spec/07.
 
+## Corrección de adjuntos y escritura — 2026-10-29
+
+Continuación autorizada por «HAZLO»; criterios en spec/09. Se corrigen DOC-01,
+DOC-03 y DRAFT-01: cursor sin edición, medidor y aviso de historial estables,
+estado documental sin presupuesto legacy, texto conservado diferenciado de
+selección enviada y escritura del siguiente mensaje durante streaming.
+
+Reviewer final APPROVE; regresiones rojo→verde, suite 144 PASS + 1 live opt-in
+omitido, analyze limpio y build Windows PASS68.9s. Tester independiente PASS:
+dos respuestas Ollama reales, escritura/cursor/tildes, etiquetas y borrador tras
+reinicio. Modelo/chat originales restaurados. Cierre y evidencia en MEMORY.md
+y spec/09; límites del arnés en tester-result.json.
+

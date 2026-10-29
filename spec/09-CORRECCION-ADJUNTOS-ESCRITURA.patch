@@ -1,0 +1,165 @@
+--- a/lib/widgets/chat_input.dart
++++ b/lib/widgets/chat_input.dart
+@@ -86,0 +87,3 @@
++  String _lastText = '';
++  bool _hadDocumentContext = false;
++  bool _hadPartialHistory = false;
+@@ -219 +222 @@
+-    if (callback == null) {
++    if (callback == null || widget.busy || _restoringDraft) {
+@@ -232,0 +236,3 @@
++            _hadPartialHistory = preview.historyPartial;
++            _hadDocumentContext = preview.documents.text.isNotEmpty ||
++                preview.documents.isPartial;
+@@ -279,0 +286,3 @@
++      _hasText = false;
++      _hadDocumentContext = false;
++      _hadPartialHistory = false;
+@@ -304,2 +313,6 @@
+-    if (widget.contextRevision != oldWidget.contextRevision ||
+-        widget.sourceRevision != oldWidget.sourceRevision) {
++    if (widget.busy != oldWidget.busy ||
++        widget.connected != oldWidget.connected ||
++        widget.draftId != oldWidget.draftId ||
++        (!widget.busy &&
++            (widget.contextRevision != oldWidget.contextRevision ||
++                widget.sourceRevision != oldWidget.sourceRevision))) {
+@@ -326,0 +340,8 @@
++    final text = _controller.text;
++    if (text == _lastText) {
++      return;
++    }
++    _lastText = text;
++    if (_settingDraft) {
++      return;
++    }
+@@ -623,0 +645 @@
++      _focusNode.requestFocus();
+@@ -676 +698,2 @@
+-          if (_preview?.historyPartial == true)
++          if (_preview?.historyPartial == true ||
++              (_preview == null && _hadPartialHistory))
+@@ -680 +703,5 @@
+-                  'Parte del historial guardado queda fuera de este envío.',
++                  _preview == null
++                      ? 'La selección del historial se comprobará antes de enviar.'
++                      : 'Parte del historial guardado queda fuera de este envío.',
++                  maxLines: 1,
++                  overflow: TextOverflow.ellipsis,
+@@ -705,2 +732 @@
+-          if (_documents.isEmpty &&
+-              (_preview?.documents.text.isNotEmpty ?? false))
++          if (_documents.isEmpty && _hadDocumentContext)
+@@ -819,4 +845,3 @@
+-    final maxChars =
+-        _preview?.documentBudgetChars ?? DocumentService.maxTotalChars;
+-    final used = _preview?.documents.chars ??
+-        DocumentService.contextCharsFor(_documents);
++    final preview = _preview;
++    final used = preview?.documents.chars ?? 0;
++    final maxChars = preview?.documentBudgetChars ?? 0;
+@@ -824,3 +849,2 @@
+-    final isFull = _preview?.documents.isPartial ??
+-        DocumentService.isContextTruncated(_documents);
+-    final color = isFull
++    final isPartial = preview?.documents.isPartial == true;
++    final color = isPartial
+@@ -830,0 +855,21 @@
++    // Sin plan real no se muestran límites ni recortes del cálculo legacy.
++    final String status;
++    if (preview == null) {
++      status = _pendingExtractions > 0
++          ? 'Leyendo documentos…'
++          : _previewError != null
++              ? 'No se pudo calcular el contexto de documentos.'
++              : !widget.connected
++                  ? 'Conecta Ollama para calcular el contexto de documentos.'
++                  : widget.onPreviewContext == null
++                      ? 'Vista previa del contexto no disponible.'
++                      : widget.busy
++                          ? 'El contexto se actualizará al terminar la respuesta.'
++                          : 'Calculando contexto de documentos…';
++    } else {
++      status = isPartial
++          ? 'Contexto parcial: se seleccionan fragmentos del texto'
++          : 'Contexto de documentos: ${_formatChars(used)} de '
++              '${_formatChars(maxChars)} caracteres'
++              ' · ≈${preview.estimatedPromptTokens}/${preview.profile.tokens} tokens';
++    }
+@@ -840,10 +885,12 @@
+-              child: Text(
+-                isFull
+-                    ? 'Contexto parcial: se seleccionan fragmentos del texto'
+-                    : 'Contexto de documentos: ${_formatChars(used)} de '
+-                        '${_formatChars(maxChars)} caracteres'
+-                        '${_preview == null ? ' (estimación)' : ' · ≈${_preview!.estimatedPromptTokens}/${_preview!.profile.tokens} tokens'}',
+-                style: TextStyle(
+-                  fontSize: 12,
+-                  color:
+-                      isFull ? colorScheme.error : colorScheme.onSurfaceVariant,
++              child: Tooltip(
++                message: status,
++                child: Text(
++                  status,
++                  maxLines: 1,
++                  overflow: TextOverflow.ellipsis,
++                  style: TextStyle(
++                    fontSize: 12,
++                    color: isPartial
++                        ? colorScheme.error
++                        : colorScheme.onSurfaceVariant,
++                  ),
+@@ -856,8 +903,13 @@
+-        ClipRRect(
+-          borderRadius: BorderRadius.circular(2),
+-          child: LinearProgressIndicator(
+-            value: ratio,
+-            minHeight: 4,
+-            color: color,
+-            backgroundColor: colorScheme.surfaceContainerHighest,
+-          ),
++        SizedBox(
++          height: 4,
++          child: preview == null
++              ? null
++              : ClipRRect(
++                  borderRadius: BorderRadius.circular(2),
++                  child: LinearProgressIndicator(
++                    value: ratio,
++                    minHeight: 4,
++                    color: color,
++                    backgroundColor: colorScheme.surfaceContainerHighest,
++                  ),
++                ),
+@@ -888 +940 @@
+-          : 'Ver el texto que se envía al modelo',
++          : 'Ver el texto extraído/conservado',
+@@ -983,2 +1035,2 @@
+-      '${document.charCount} caracteres',
+-      if (document.truncated) 'recortado',
++      '${document.extractedText?.length ?? document.charCount} caracteres conservados',
++      if (document.extractionTruncated) 'extracción parcial',
+--- a/lib/widgets/message_bubble.dart
++++ b/lib/widgets/message_bubble.dart
+@@ -314 +314 @@
+-              message: 'Ver el texto que se envió al modelo',
++              message: 'Ver el texto extraído/conservado',
+@@ -344,3 +344,5 @@
+-                        document.truncated
+-                            ? '${document.sizeFormatted} · recortado'
+-                            : document.sizeFormatted,
++                        document.extractionTruncated
++                            ? '${document.sizeFormatted} · extracción parcial'
++                            : document.truncated
++                                ? '${document.sizeFormatted} · vista previa acotada'
++                                : document.sizeFormatted,
+--- a/lib/widgets/document_text_dialog.dart
++++ b/lib/widgets/document_text_dialog.dart
+@@ -7 +7 @@
+-/// Abre un visor con el texto exacto que se envía al modelo para [document].
++/// Muestra el texto extraído/conservado o una selección enviada explícita.
+@@ -9,2 +9,2 @@
+-/// Sirve para comprobar que el documento se leyó bien y ver qué parte se
+-/// recortó por límite de contexto.
++/// [exactSelection] identifica selecciones ya enviadas; por defecto se muestra
++/// la extracción disponible, que puede ser mayor que el contexto de una petición.

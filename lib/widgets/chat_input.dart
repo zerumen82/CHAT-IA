@@ -84,6 +84,9 @@ class ChatInputState extends State<ChatInput> {
   final List<DocumentAttachment> _documents = [];
   int _pendingExtractions = 0;
   bool _hasText = false;
+  String _lastText = '';
+  bool _hadDocumentContext = false;
+  bool _hadPartialHistory = false;
   PreparedContext? _preview;
   String? _previewError;
   Timer? _previewTimer;
@@ -216,7 +219,7 @@ class ChatInputState extends State<ChatInput> {
       _previewError = null;
     });
     final callback = widget.onPreviewContext;
-    if (callback == null) {
+    if (callback == null || widget.busy || _restoringDraft) {
       return;
     }
     _previewTimer =
@@ -230,6 +233,9 @@ class ChatInputState extends State<ChatInput> {
         if (mounted && version == _previewVersion) {
           setState(() {
             _preview = preview;
+            _hadPartialHistory = preview.historyPartial;
+            _hadDocumentContext = preview.documents.text.isNotEmpty ||
+                preview.documents.isPartial;
             _previewError = null;
           });
         }
@@ -277,6 +283,9 @@ class ChatInputState extends State<ChatInput> {
       _settingDraft = false;
       _selectedImages = [];
       _documents.clear();
+      _hasText = false;
+      _hadDocumentContext = false;
+      _hadPartialHistory = false;
       _imageReads.clear();
       _pendingExtractions = 0;
       _pendingDocumentActivation.clear();
@@ -301,8 +310,12 @@ class ChatInputState extends State<ChatInput> {
         }
       });
     }
-    if (widget.contextRevision != oldWidget.contextRevision ||
-        widget.sourceRevision != oldWidget.sourceRevision) {
+    if (widget.busy != oldWidget.busy ||
+        widget.connected != oldWidget.connected ||
+        widget.draftId != oldWidget.draftId ||
+        (!widget.busy &&
+            (widget.contextRevision != oldWidget.contextRevision ||
+                widget.sourceRevision != oldWidget.sourceRevision))) {
       refreshContextPreview();
     }
   }
@@ -324,6 +337,14 @@ class ChatInputState extends State<ChatInput> {
   }
 
   void _onTextChanged() {
+    final text = _controller.text;
+    if (text == _lastText) {
+      return;
+    }
+    _lastText = text;
+    if (_settingDraft) {
+      return;
+    }
     _draftChanged();
     refreshContextPreview();
     // Solo importa si hay texto o no; el contador se actualiza aparte.
@@ -621,6 +642,7 @@ class ChatInputState extends State<ChatInput> {
         _documents.clear();
         _hasText = false;
       });
+      _focusNode.requestFocus();
       await saveDraft();
     } catch (error) {
       _showSnack('No se pudo enviar: $error');
@@ -673,11 +695,16 @@ class ChatInputState extends State<ChatInput> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (_documents.isNotEmpty) _buildDocumentPreview(),
-          if (_preview?.historyPartial == true)
+          if (_preview?.historyPartial == true ||
+              (_preview == null && _hadPartialHistory))
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Text(
-                  'Parte del historial guardado queda fuera de este envío.',
+                  _preview == null
+                      ? 'La selección del historial se comprobará antes de enviar.'
+                      : 'Parte del historial guardado queda fuera de este envío.',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 12, color: colorScheme.tertiary)),
             ),
           if (_draftWarning != null)
@@ -702,8 +729,7 @@ class ChatInputState extends State<ChatInput> {
                           child: const Text('Elegir modelo compatible')),
                   ]),
             ),
-          if (_documents.isEmpty &&
-              (_preview?.documents.text.isNotEmpty ?? false))
+          if (_documents.isEmpty && _hadDocumentContext)
             Padding(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -816,18 +842,37 @@ class ChatInputState extends State<ChatInput> {
 
   /// Barra con el presupuesto de contexto que ocupan los documentos.
   Widget _buildContextMeter(ColorScheme colorScheme) {
-    final maxChars =
-        _preview?.documentBudgetChars ?? DocumentService.maxTotalChars;
-    final used = _preview?.documents.chars ??
-        DocumentService.contextCharsFor(_documents);
+    final preview = _preview;
+    final used = preview?.documents.chars ?? 0;
+    final maxChars = preview?.documentBudgetChars ?? 0;
     final ratio = maxChars <= 0 ? 0.0 : (used / maxChars).clamp(0.0, 1.0);
-    final isFull = _preview?.documents.isPartial ??
-        DocumentService.isContextTruncated(_documents);
-    final color = isFull
+    final isPartial = preview?.documents.isPartial == true;
+    final color = isPartial
         ? colorScheme.error
         : ratio >= 0.75
             ? colorScheme.tertiary
             : colorScheme.primary;
+    // Sin plan real no se muestran límites ni recortes del cálculo legacy.
+    final String status;
+    if (preview == null) {
+      status = _pendingExtractions > 0
+          ? 'Leyendo documentos…'
+          : _previewError != null
+              ? 'No se pudo calcular el contexto de documentos.'
+              : !widget.connected
+                  ? 'Conecta Ollama para calcular el contexto de documentos.'
+                  : widget.onPreviewContext == null
+                      ? 'Vista previa del contexto no disponible.'
+                      : widget.busy
+                          ? 'El contexto se actualizará al terminar la respuesta.'
+                          : 'Calculando contexto de documentos…';
+    } else {
+      status = isPartial
+          ? 'Contexto parcial: se seleccionan fragmentos del texto'
+          : 'Contexto de documentos: ${_formatChars(used)} de '
+              '${_formatChars(maxChars)} caracteres'
+              ' · ≈${preview.estimatedPromptTokens}/${preview.profile.tokens} tokens';
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -837,30 +882,37 @@ class ChatInputState extends State<ChatInput> {
             Icon(Icons.data_usage, size: 14, color: color),
             const SizedBox(width: 6),
             Expanded(
-              child: Text(
-                isFull
-                    ? 'Contexto parcial: se seleccionan fragmentos del texto'
-                    : 'Contexto de documentos: ${_formatChars(used)} de '
-                        '${_formatChars(maxChars)} caracteres'
-                        '${_preview == null ? ' (estimación)' : ' · ≈${_preview!.estimatedPromptTokens}/${_preview!.profile.tokens} tokens'}',
-                style: TextStyle(
-                  fontSize: 12,
-                  color:
-                      isFull ? colorScheme.error : colorScheme.onSurfaceVariant,
+              child: Tooltip(
+                message: status,
+                child: Text(
+                  status,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isPartial
+                        ? colorScheme.error
+                        : colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             ),
           ],
         ),
         const SizedBox(height: 4),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(2),
-          child: LinearProgressIndicator(
-            value: ratio,
-            minHeight: 4,
-            color: color,
-            backgroundColor: colorScheme.surfaceContainerHighest,
-          ),
+        SizedBox(
+          height: 4,
+          child: preview == null
+              ? null
+              : ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: LinearProgressIndicator(
+                    value: ratio,
+                    minHeight: 4,
+                    color: color,
+                    backgroundColor: colorScheme.surfaceContainerHighest,
+                  ),
+                ),
         ),
       ],
     );
@@ -885,7 +937,7 @@ class ChatInputState extends State<ChatInput> {
     return Tooltip(
       message: document.isLoading
           ? 'Extrayendo el texto…'
-          : 'Ver el texto que se envía al modelo',
+          : 'Ver el texto extraído/conservado',
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: document.isLoading
@@ -980,8 +1032,8 @@ class ChatInputState extends State<ChatInput> {
 
     final parts = <String>[
       if (document.sizeBytes > 0) document.sizeFormatted,
-      '${document.charCount} caracteres',
-      if (document.truncated) 'recortado',
+      '${document.extractedText?.length ?? document.charCount} caracteres conservados',
+      if (document.extractionTruncated) 'extracción parcial',
     ];
     return parts.join(' · ');
   }

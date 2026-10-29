@@ -20,6 +20,28 @@ class _PendingDrafts extends DraftService {
 }
 
 void main() {
+  testWidgets('cursor movement during acceptance still clears the sent draft',
+      (tester) async {
+    final accepted = Completer<bool>();
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: ChatInput(
+                connected: true, onSubmit: (_, __, ___) => accepted.future))));
+    await tester.enterText(find.byType(TextField), 'Mensaje para enviar');
+    await tester.pump();
+    await tester.tap(find.byTooltip('Enviar mensaje (Enter)'));
+    await tester.pump();
+    final controller =
+        tester.widget<TextField>(find.byType(TextField)).controller!;
+    controller.selection = const TextSelection.collapsed(offset: 4);
+    accepted.complete(true);
+    await tester.pump();
+    expect(controller.text, isEmpty);
+    expect(tester.widget<TextField>(find.byType(TextField)).focusNode!.hasFocus,
+        isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('allows preparing a message while Ollama is offline',
       (tester) async {
     await tester.pumpWidget(MaterialApp(

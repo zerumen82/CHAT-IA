@@ -4,10 +4,10 @@ import 'package:flutter/services.dart';
 import '../models/document_attachment.dart';
 import '../services/document_store_service.dart';
 
-/// Abre un visor con el texto exacto que se envía al modelo para [document].
+/// Muestra el texto extraído/conservado o una selección enviada explícita.
 ///
-/// Sirve para comprobar que el documento se leyó bien y ver qué parte se
-/// recortó por límite de contexto.
+/// [exactSelection] identifica selecciones ya enviadas; por defecto se muestra
+/// la extracción disponible, que puede ser mayor que el contexto de una petición.
 Future<void> showDocumentTextDialog(
     BuildContext context, DocumentAttachment document,
     {bool exactSelection = false}) async {

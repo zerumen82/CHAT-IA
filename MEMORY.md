@@ -17,8 +17,8 @@
 | Builds recientes | Último commit significativo: `63d2175` "Migración a Ollama: multimodal, icono retrocápsula, 8 idiomas, modelo preferido guardado" |
 | Tamaño código | ~11,500 líneas Dart en `lib/` (26 archivos `.dart`) |
 | `flutter analyze` | **Sin incidencias** |
-| `flutter test` | **138 pruebas pasan + 1 live opt-in omitido en suite normal**; ejecución live separada PASS (2026-10-29) |
-| Build Windows | `flutter build windows --no-pub` completado tras correcciones (2026-10-29, 71.7s) |
+| `flutter test` | **144 pruebas pasan + 1 live opt-in omitido en suite normal**; ejecución live separada PASS (2026-10-29) |
+| Build Windows | `flutter build windows --no-pub` completado tras corrección de adjuntos/escritura (2026-10-29, 68.9s) |
 | CI/CD | No hay (sin `.github/workflows`) |
 | Instaladores | Inno Setup (`installer/lightchat_setup.iss`), script Ollama (`installer/install_ollama.ps1`), `build_installer.ps1`, `dist/` con build PyInstaller antigua |
 
@@ -316,3 +316,78 @@
 - **Sidebar de conversaciones modernizada:** CircleAvatar con inicial, fondo activo sutil y borde indicador.
 - **Verificación:** lutter analyze No issues found; lutter test 138 PASS; lutter build windows lightchat.exe construido (102 s). Sin instalaciones, commit ni push.
 
+
+## Corrección de adjuntos y escritura — 2026-10-29 (verificado)
+
+- Petición: mensajes contradictorios al cargar archivo y dificultad para escribir
+  después de primera respuesta. Skill fix; SDD en spec/09. Reviewer confirmó:
+  selección/composición se trataban como edición, incrementaban versión del
+  borrador y borraban preview; el medidor alternaba presupuesto legacy/real y
+  desaparecía al teclear. El chip confundía preview recortada con extracción.
+- Primer turno: denegados lib, MEMORY.md, .dart_tool y procesos hijos Flutter;
+  candidato revisado y pruebas preparados en spec/test. Ningún arreglo aplicado
+  en esa fase. No se alteraron ACL. Usuario habilitó entorno y pidió HAZLO.
+- Tras HAZLO: hashes original/candidato verificados antes de aplicar. ChatInput
+  ignora eventos sin cambio textual; estabiliza medidor y aviso de historial
+  durante cálculo; pausa preview durante streaming y refresca al terminar;
+  devuelve foco tras aceptación sin cambios; chip distingue texto conservado
+  y extracción parcial. Sin callback indica preview no disponible, sin inventar
+  cálculo ni presupuesto. Conserva descarte de resultados antiguos/borradores.
+- Regresiones originales: 9 PASS/5 FAIL esperados. Verde final: 14 PASS. Primer
+  verde falló sólo en arnés: timer armado dentro runAsync no seguía reloj fake;
+  rearmado fuera runAsync, con extracción real y aserciones intactas. La primera
+  suite descubrió expectativa legacy del widget aislado sin planificador;
+  actualizada para exigir estado no disponible y ausencia de barra inventada.
+- Suite final143PASS+1liveopt-inomitido,11s,exit0; analyze final No issues found,
+  5.3s,exit0. Reviewer independiente APPROVE final incluyendo rama sin callback.
+  Logs .dart_tool/attachment-editor-red/green-final/tests-final/analyze-final-
+  20261029.log. Build y tester nativo en curso, no declarar listo aún.
+- Sin instalaciones, commit, push ni reversión de cambios ajenos. La bitácora
+  provisional de bloqueo de spec/09 queda integrada aquí como historia.
+
+### Validación real y etiquetas de adjuntos enviados
+
+- Build inicial PASS74.5s. Tester nativo adjuntó TXT35803caracteres por selector
+  Windows, con estado parcial coherente con perfil16k. Qwen2.5 real recuperó
+  TOPACIO-58219 y completó un segundo envío con OK; finishReason=completed ambos.
+- Tras aceptar primer envío, sin clicar otra vez el editor, se escribió borrador
+  con tildes, se movió cursor e insertó EDITADO durante generación; después se
+  añadió texto. Igualdad exacta PASS en draft-edit-evidence.json. Tercer borrador
+  conservado y modelo/chat originales restaurados true/true.
+- Primeras capturas de aceptación/foco tenían selector de carpeta aún abierto
+  por invoke UIA no soportado; se canceló por handle nativo y se sustituyeron por
+  evidencias *actual. En segundo envío Ctrl+A del arnés no reemplazó texto, así
+  que se envió borrador+petición; no se acredita selección total con ese paso.
+- Captura real descubrió misma etiqueta ambigua en burbuja ya enviada. Corregido
+  tooltip extraído/conservado y distinción extracción parcial/vista previa
+  acotada, con prioridad de extracción parcial. Comentario del visor alineado.
+  Prueba existente parametrizada para ambos estados. Reviewer final APPROVE.
+- Última suite144PASS+1opt-inomitido,14s,exit0; analyze limpio13.0s,exit0; build
+  final68.9s,exit0. Logs attachment-editor-tests/analyze/build-final-20261029 en
+  .dart_tool. Falta sólo captura visual del último build con etiquetas finales.
+
+### Cierre definitivo de adjuntos y escritura
+
+- Tester independiente PASS final del último build: final-chip-tooltip-visible
+  muestra vista previa acotada y tooltip extraído/conservado. Visor coherente y
+  borrador final restaurado tras reinicio. Dos respuestas Ollama completed,
+  cursor/tildes/texto exactos durante y después de generar.
+- Restauración final true/true de modelo y chat originales; app final abierta
+  PID7864. El primer false leído se adelantó a persistencia asíncrona; se esperó
+  confirmación definitiva, guardada en final-restoration.json/tester-result.json.
+- Reviewer final APPROVE; tester PASS; 144pruebas PASS+1liveopt-inomitido;
+  analyze limpio13s; build68.9s. Evidencia .dart_tool/attachment-editor-20261029
+  y logs attachment-editor-*-final-20261029.log. SDD02/04/09 y AGENTS actualizados.
+  Sin pendientes nuevos, instalaciones, commit, push ni cambios de permisos.
+
+### Publicación autorizada — 2026-10-29
+
+- Usuario solicita COMIT Y PUSH tras el cierre verificado de la corrección.
+- Destino: origin/master, github.com/zerumen82/CHAT-IA. Fetch previo correcto;
+  HEAD y origin/master sincronizados (0/0), sin cambios ajenos al arreglo.
+- Se incluyen código, regresiones, SDD, bitácora y candidato histórico revisado;
+  se excluyen evidencias/artefactos locales ignorados de .dart_tool y build.
+- Validaciones vigentes:144PASS, analyze limpio, build68.9s, reviewer APPROVE y
+  tester nativo PASS. La publicación no modifica el código verificado.
+- El parche histórico se guarda sin líneas de contexto (git apply --unidiff-zero)
+  para evitar falsos avisos de whitespace por el marcador de contexto vacío.

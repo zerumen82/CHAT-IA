@@ -1,0 +1,55 @@
+{
+  "path": "lib/widgets/chat_input.dart",
+  "originalSha256": "47118937817bf2a4724ae44ed5baf2c226487850db8da77c0d90e920b131cb3c",
+  "candidateSha256": "e24420b8afe7a64d923c02351fc3edc8deb1a4185de9124484683173de079a88",
+  "applied": true,
+  "verification": "COMPLETE: applied, reviewer APPROVE, tester PASS, analyze/tests/build green, final native UI verified",
+  "tests": [
+    {
+      "path": "test/chat_input_context_test.dart",
+      "sha256": "e553a05f13c6ad69c6cca9f76ae75734578f610debadc908b16bac6872a9590b"
+    },
+    {
+      "path": "test/chat_input_interaction_test.dart",
+      "sha256": "9180c17a051401ef93e92fd5e2af8cdbc728c3ff37cccaa7da0b981c67be5882"
+    },
+    {
+      "path": "test/widget_test.dart",
+      "sha256": "317c9952e51469a5992288b1e73c0ea536891d87eb1e6f225541bdd50c5c97f8"
+    }
+  ],
+  "review": "APPROVE final including labels in sent-document bubbles, extraction priority, and viewer comments",
+  "historicalBlockedChecks": {
+    "dart_format_parse": "PASS: candidate and both test files parsed/formatted by Dart 3.13.7; not a type check",
+    "targeted_tests": "NOT RUN: Flutter cannot spawn where aapt, CreateFile failed 5 / access denied",
+    "dart_analyze": "NOT RUN: cannot launch dartaotruntime.exe / access denied",
+    "build": "NOT RUN: Flutter process creation blocked",
+    "native_ui": "NOT RUN: candidate not applied",
+    "production_write": "DENIED: lib/widgets/chat_input.dart",
+    "memory_write": "DENIED: MEMORY.md; interim log kept in spec/09",
+    "evidence_write": "DENIED: .dart_tool/attachment-editor-red-20261029.log",
+    "original_preserved": "PASS: SHA256 unchanged after denied apply_patch"
+  },
+  "checks": {
+    "regression_red": "9 PASS / 5 expected FAIL on original code",
+    "regression_green": "14 PASS",
+    "full_suite": "PASS: 144 tests, 1 opt-in live skipped, exit0, 14s; separate real native inference completed twice",
+    "flutter_analyze": "PASS: No issues found, exit0, 13.0s",
+    "build": "PASS: final flutter build windows --no-pub exit0, 68.9s",
+    "native_ui": "PASS final build: 2 completed real Ollama replies; native file picker; next draft/cursor/accents; final labels; draft restored after restart",
+    "review": "APPROVE final including unavailable-preview branch",
+    "restoration": "PASS: original model and conversation restored; final application left open PID7864"
+  },
+  "additionalProductionFiles": [
+    {
+      "path": "lib/widgets/message_bubble.dart",
+      "sha256": "7bb6aa2ae9dee504292324c2ab2cb009ee93d9c5c051df2e5a4a8af986e4327d"
+    },
+    {
+      "path": "lib/widgets/document_text_dialog.dart",
+      "sha256": "b69346e7b2b3eeea31aceb2b34bd50518e548eacef43a91a7758017e2e7ef16e"
+    }
+  ],
+  "evidence": ".dart_tool/attachment-editor-20261029/tester-result.json",
+  "historicalPatchFormat": "Unified diff without context; apply with git apply --unidiff-zero if needed. Already applied."
+}

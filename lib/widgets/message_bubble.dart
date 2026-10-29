@@ -311,7 +311,7 @@ class MessageBubble extends StatelessWidget {
         children: [
           for (final document in documents)
             Tooltip(
-              message: 'Ver el texto que se envió al modelo',
+              message: 'Ver el texto extraído/conservado',
               child: InkWell(
                 borderRadius: BorderRadius.circular(8),
                 onTap: () => showDocumentTextDialog(context, document),
@@ -341,9 +341,11 @@ class MessageBubble extends StatelessWidget {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        document.truncated
-                            ? '${document.sizeFormatted} · recortado'
-                            : document.sizeFormatted,
+                        document.extractionTruncated
+                            ? '${document.sizeFormatted} · extracción parcial'
+                            : document.truncated
+                                ? '${document.sizeFormatted} · vista previa acotada'
+                                : document.sizeFormatted,
                         style: TextStyle(
                           fontSize: 11,
                           color: foregroundColor.withValues(alpha: 0.7),

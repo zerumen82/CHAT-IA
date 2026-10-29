@@ -21,7 +21,7 @@ Ejecutar siempre desde la raíz del repo (`lightchat/`):
 ```bash
 flutter pub get        # dependencias (obligatorio en entorno limpio)
 flutter analyze        # lints — línea base actual: 0 incidencias (~40 s)
-flutter test           # 138 pruebas + 1 opt-in live (ver §7)
+flutter test           # 144 pruebas + 1 opt-in live (ver §7)
 flutter run            # desarrollo con hot-restart
 flutter build windows  # release Windows (también: macos | linux)
 ```
@@ -110,13 +110,13 @@ Los widgets **no** hacen HTTP directo; los services **no** dibujan UI.
 
 ## 7. Testing & Verification (Pruebas y verificación mínima)
 
-**Estado actual (2026-10-29):** 138 pruebas pasan y una prueba real de Ollama es opt-in: chat/streaming, cancelación/timeouts/fin/parciales, capacidades, fuentes y rutas legacy, borradores/reinicio/concurrencia, cálculo tabular, exportación, contexto, idioma, temas y UI. `test/widget_test.dart` prueba la pantalla real. La evidencia live actual se guarda fuera de Git en `.dart_tool/live-evidence-20261029`.
+**Estado actual (2026-10-29):** 144 pruebas pasan y una prueba real de Ollama es opt-in: chat/streaming, cancelación/timeouts/fin/parciales, capacidades, fuentes y rutas legacy, borradores/reinicio/concurrencia, cálculo tabular, exportación, contexto, idioma, temas y UI. `test/widget_test.dart` prueba la pantalla real. La evidencia live actual se guarda fuera de Git en `.dart_tool/live-evidence-20261029`.
 
 Checklist de verificación antes de dar un cambio por terminado:
 
 1. `flutter pub get` (si es entorno limpio)
 2. `flutter analyze` → **cero errores** (warnings/info: no aumentarlos; ideal: reducir)
-3. `flutter test --no-pub` → deben pasar todos (hoy 138 + 1 live omitido por defecto); **cualquier test nuevo debe pasar**
+3. `flutter test --no-pub` → deben pasar todos (hoy 144 + 1 live omitido por defecto); **cualquier test nuevo debe pasar**
 4. Prueba manual con Ollama corriendo: `flutter run` → enviar un mensaje y ver streaming + comprobar el indicador de estado
 
 Prioridad de cobertura futura (hoy 0 tests reales): lógica pura en `context_service`, parsing/caché de `model_catalog_service`, `hardware_detector_service`.
@@ -185,5 +185,16 @@ Ya existe deuda histórica (detalle en `MEMORY.md`); **no aumentarla**:
   en isolate, con decimales BigInt y exclusiones explícitas. Rechazar límites o
   lectura incompleta. BIFF8 no sirve para calcular con excel2003 porque oculta
   fórmulas como cachés; XLSX renombrado sí se reconoce. No ejecutar fórmulas/modelo.
-- Suite actual: 138 PASS + 1 live opt-in; live real separado PASS. Evidencia de
+- Suite actual: 144 PASS + 1 live opt-in; live real separado PASS. Evidencia de
   2026-10-29 en .dart_tool/live-evidence-20261029 y logs ui-improvements-*.
+
+## 13. Escritura y avisos documentales (2026-10-29)
+
+- En ChatInput, ignorar cambios de selección/composición que no cambian texto:
+  no deben incrementar versión del borrador ni recalcular contexto.
+- Durante preview pendiente conservar espacio del medidor/aviso de historial;
+  no mostrar presupuestos legacy. Pausar preview durante streaming y refrescar
+  con historial final. Mantener identidad/versionado y borradores al aceptar.
+- En entrada y burbujas, el visor normal muestra texto extraído/conservado;
+  selección enviada es la acción específica de contexto. Distinguir extracción
+  parcial de vista previa acotada. Regresiones y evidencia en spec/09.

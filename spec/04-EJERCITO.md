@@ -39,3 +39,16 @@ El usuario aprobó el plan y la ampliación de creación de XLSX/PDF en el chat.
   .dart_tool/ui-improvements-20261029/tester-result.json y MEMORY.md/spec/07.
 - Cierre: reviewer APPROVE + tester PASS + analyze/suite/build verdes y live real.
 
+## Corrección de adjuntos y escritura — 2026-10-29
+
+- Usuario: «HAZLO» tras habilitar acceso al proyecto y ejecución de Flutter.
+- Editor: aplica candidato sólo tras verificar hashes; conserva cambios ajenos.
+- Reviewer independiente: APPROVE final del código y regresiones, incluida rama
+  sin callback de vista previa. No sustituye validación de ejecución.
+- Root: cinco regresiones rojas con original, 14 focalizadas verdes tras arreglo;
+  suite completa144PASS+1opt-inomitido, analyze limpio y build final PASS68.9s.
+- Tester independiente: PASS nativo con dos respuestas reales, escritura/cursor,
+  etiquetas y reinicio/borrador. Modelo/chat restaurados true/true; app abierta.
+  Evidencia en .dart_tool/attachment-editor-20261029/tester-result.json.
+- Cierre: APPROVE + PASS, SDD/memoria actualizados; sin inferencia durante build.
+

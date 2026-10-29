@@ -257,7 +257,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('notas.txt'), findsOneWidget);
-    expect(find.textContaining('Contexto de documentos'), findsOneWidget);
+    // Este widget aislado no tiene planificador: no inventar presupuesto.
+    expect(
+        find.text('Vista previa del contexto no disponible.'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
 
     await tester.tap(find.text('notas.txt'));
     await tester.pumpAndSettle();
@@ -272,41 +275,57 @@ void main() {
     await tester.runAsync(() => directory.delete(recursive: true));
   });
 
-  testWidgets('shows the document chip text in the message bubble',
-      (tester) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: MessageBubble(
-            message: Message(
-              text: 'Resumen',
-              isUser: true,
-              timestamp: DateTime(2026, 10, 24),
-              documents: const [
-                DocumentAttachment(
-                  path: 'informe.pdf',
-                  name: 'informe.pdf',
-                  kind: DocumentKind.pdf,
-                  sizeBytes: 2048,
-                  text: 'Texto extraído del PDF',
-                  originalChars: 24,
-                ),
-              ],
+  for (final extractionPartial in [false, true]) {
+    testWidgets(
+        'shows the document chip text with extractionPartial=$extractionPartial',
+        (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MessageBubble(
+              message: Message(
+                text: 'Resumen',
+                isUser: true,
+                timestamp: DateTime(2026, 10, 24),
+                documents: [
+                  DocumentAttachment(
+                    path: 'informe.pdf',
+                    name: 'informe.pdf',
+                    kind: DocumentKind.pdf,
+                    sizeBytes: 2048,
+                    text: 'Texto extraído del PDF',
+                    originalChars: 24,
+                    truncated: true,
+                    extractionTruncated: extractionPartial,
+                  ),
+                ],
+              ),
             ),
           ),
         ),
-      ),
-    );
+      );
 
-    await tester.tap(find.text('informe.pdf'));
-    await tester.pumpAndSettle();
+      expect(
+          find.byTooltip('Ver el texto extraído/conservado'), findsOneWidget);
+      expect(
+          find.textContaining(extractionPartial
+              ? 'extracción parcial'
+              : 'vista previa acotada'),
+          findsOneWidget);
+      if (extractionPartial) {
+        expect(find.textContaining('vista previa acotada'), findsNothing);
+      }
+      expect(find.textContaining('recortado'), findsNothing);
+      await tester.tap(find.text('informe.pdf'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Texto extraído del PDF'), findsOneWidget);
-    expect(find.textContaining('caracteres extraídos/conservados'),
-        findsOneWidget);
-    await tester.tap(find.text('Cerrar'));
-    await tester.pumpAndSettle();
-  });
+      expect(find.text('Texto extraído del PDF'), findsOneWidget);
+      expect(find.textContaining('caracteres extraídos/conservados'),
+          findsOneWidget);
+      await tester.tap(find.text('Cerrar'));
+      await tester.pumpAndSettle();
+    });
+  }
 
   testWidgets('sends the message when Enter is pressed', (tester) async {
     String? sentText;
