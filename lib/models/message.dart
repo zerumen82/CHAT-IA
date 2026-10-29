@@ -1,4 +1,5 @@
 import 'document_attachment.dart';
+import 'generated_file.dart';
 
 /// Modelo de mensaje con soporte multimodal (texto + imágenes + documentos)
 class Message {
@@ -9,6 +10,7 @@ class Message {
   final String? model;
   final Map<String, dynamic>? metadata;
   final int? tokenCount;
+  final List<GeneratedFile> generatedFiles;
 
   // Soporte para imágenes
   final List<MessageImage>? images;
@@ -28,6 +30,7 @@ class Message {
     this.tokenCount,
     this.images,
     this.documents,
+    this.generatedFiles = const [],
   })  : hasImages = images != null && images.isNotEmpty,
         hasDocuments = documents != null && documents.isNotEmpty;
 
@@ -78,10 +81,17 @@ class Message {
       'isError': isError,
       'timestamp': timestamp.toIso8601String(),
       'model': model,
-      'metadata': metadata,
+      'metadata': metadata == null
+          ? null
+          : {
+              for (final entry in metadata!.entries)
+                if (entry.key != 'contextText' && entry.key != 'sentDocuments')
+                  entry.key: entry.value,
+            },
       'tokenCount': tokenCount,
       'images': images?.map((i) => i.toJson()).toList(),
       'documents': documents?.map((d) => d.toJson()).toList(),
+      'generatedFiles': generatedFiles.map((file) => file.toJson()).toList(),
     };
   }
 
@@ -110,6 +120,10 @@ class Message {
       tokenCount: json['tokenCount'],
       images: imagesList,
       documents: documentsList,
+      generatedFiles: (json['generatedFiles'] as List? ?? const [])
+          .map((file) =>
+              GeneratedFile.fromJson(Map<String, dynamic>.from(file as Map)))
+          .toList(),
     );
   }
 
@@ -124,6 +138,7 @@ class Message {
     int? tokenCount,
     List<MessageImage>? images,
     List<DocumentAttachment>? documents,
+    List<GeneratedFile>? generatedFiles,
   }) {
     return Message(
       text: text ?? this.text,
@@ -135,6 +150,7 @@ class Message {
       tokenCount: tokenCount ?? this.tokenCount,
       images: images ?? this.images,
       documents: documents ?? this.documents,
+      generatedFiles: generatedFiles ?? this.generatedFiles,
     );
   }
 

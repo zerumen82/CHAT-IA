@@ -1,4 +1,8 @@
 import 'dart:io';
+import 'dart:async';
+import '../models/prepared_context.dart';
+import '../config/context_config.dart';
+import '../config/ui_config.dart';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -7,6 +11,8 @@ import 'package:image_picker/image_picker.dart';
 
 import '../models/document_attachment.dart';
 import '../services/document_service.dart';
+import '../services/document_store_service.dart';
+import '../services/draft_service.dart';
 import 'document_text_dialog.dart';
 
 enum _AttachAction { file, gallery, camera }
@@ -17,7 +23,22 @@ class ChatInput extends StatefulWidget {
     String text,
     List<XFile>? images,
     List<DocumentAttachment>? documents,
-  ) onSendMessage;
+  )? onSendMessage;
+  final Future<bool> Function(String, List<XFile>?, List<DocumentAttachment>?)?
+      onSubmit;
+  final String? draftId;
+  final DraftService? draftService;
+  final bool? supportsVision;
+  final VoidCallback? onChooseVisionModel;
+  final void Function(DocumentAttachment)? onDocumentsAttached;
+  final int sourceRevision;
+  final Future<PreparedContext> Function(String, List<DocumentAttachment>, int)?
+      onPreviewContext;
+  final ({
+    String model,
+    String? conversationId,
+    int messagesVersion
+  })? contextRevision;
   final bool enabled;
 
   /// True mientras el modelo responde: se puede escribir, pero no enviar.
@@ -29,18 +50,28 @@ class ChatInput extends StatefulWidget {
 
   const ChatInput({
     super.key,
-    required this.onSendMessage,
+    this.onSendMessage,
     this.enabled = true,
+    this.onPreviewContext,
+    this.contextRevision,
     this.busy = false,
     this.connected = false,
     this.hintText,
-  });
+    this.onSubmit,
+    this.draftId,
+    this.draftService,
+    this.supportsVision,
+    this.onChooseVisionModel,
+    this.onDocumentsAttached,
+    this.sourceRevision = 0,
+  }) : assert(onSendMessage != null || onSubmit != null);
 
   @override
   State<ChatInput> createState() => ChatInputState();
 }
 
 class ChatInputState extends State<ChatInput> {
+  DraftService get _drafts => widget.draftService ?? DraftService.instance;
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   final ImagePicker _imagePicker = ImagePicker();
@@ -53,6 +84,165 @@ class ChatInputState extends State<ChatInput> {
   final List<DocumentAttachment> _documents = [];
   int _pendingExtractions = 0;
   bool _hasText = false;
+  PreparedContext? _preview;
+  String? _previewError;
+  Timer? _previewTimer;
+  int _previewVersion = 0;
+  int _draftVersion = 0;
+  int _conversationVersion = 0;
+  bool _restoringDraft = false;
+  bool _submitting = false;
+  bool _settingDraft = false;
+  String? _draftWarning;
+  Timer? _draftTimer;
+  final List<DocumentAttachment> _pendingDocumentActivation = [];
+
+  List<DocumentAttachment> get documentAttachments =>
+      List.unmodifiable(_documents.where((document) => document.isReady));
+
+  ChatDraft _snapshot() => ChatDraft(
+        text: _controller.text,
+        imagePaths: _selectedImages.map((image) => image.path).toList(),
+        documents: _documents,
+      );
+
+  Future<void> saveDraft() async {
+    final id = widget.draftId;
+    if (id == null || _restoringDraft) {
+      return;
+    }
+    await _saveSnapshot(id, _snapshot());
+  }
+
+  Future<void> _saveSnapshot(String id, ChatDraft draft) async {
+    try {
+      final warning = await _drafts.save(id, draft);
+      if (mounted && widget.draftId == id && warning != _draftWarning) {
+        setState(() => _draftWarning = warning);
+      }
+    } catch (error) {
+      if (mounted && widget.draftId == id) {
+        setState(
+            () => _draftWarning = 'No se pudo guardar el borrador: $error');
+      }
+    }
+  }
+
+  void _draftChanged() {
+    if (_settingDraft) {
+      return;
+    }
+    _draftVersion++;
+    _draftTimer?.cancel();
+    if (widget.draftId != null) {
+      _drafts.remember(widget.draftId!, _snapshot());
+      _draftTimer = Timer(
+          const Duration(milliseconds: UiConfig.draftDebounceMs), saveDraft);
+    }
+  }
+
+  Future<void> _restoreDraft(String id,
+      {bool activateDocuments = false}) async {
+    final version = ++_draftVersion;
+    _restoringDraft = true;
+    try {
+      final saved = await _drafts.load(id);
+      if (!mounted || version != _draftVersion || widget.draftId != id) {
+        return;
+      }
+      final documents = <DocumentAttachment>[];
+      for (final document in saved.documents) {
+        if (document.isReady) {
+          documents.add(document);
+        } else {
+          try {
+            documents.add(document.storageId != null
+                ? await DocumentStoreService.instance.hydrate(document)
+                : await DocumentService.extract(document.path,
+                    displayName: document.name));
+          } catch (error) {
+            documents
+                .add(document.copyWith(error: 'No se pudo restaurar: $error'));
+          }
+        }
+        if (!mounted || version != _draftVersion || widget.draftId != id) {
+          return;
+        }
+      }
+      setState(() {
+        _settingDraft = true;
+        _controller.text = saved.text;
+        _settingDraft = false;
+        _selectedImages = saved.imagePaths.map(XFile.new).toList();
+        _documents
+          ..clear()
+          ..addAll(documents);
+        _hasText = saved.text.isNotEmpty;
+        _draftWarning = saved.warning;
+      });
+      if (activateDocuments) {
+        for (final document
+            in documents.where((document) => document.isReady)) {
+          widget.onDocumentsAttached?.call(document);
+        }
+      }
+    } catch (error) {
+      if (mounted && version == _draftVersion && widget.draftId == id) {
+        setState(() => _draftWarning = 'No se pudo abrir el borrador: $error');
+      }
+    } finally {
+      if (mounted && version == _draftVersion && widget.draftId == id) {
+        setState(() => _restoringDraft = false);
+        refreshContextPreview();
+      }
+    }
+  }
+
+  void setDraftText(String text) {
+    if (_restoringDraft) {
+      _showSnack('Espera a que se abra el borrador antes de cambiar su texto.');
+      return;
+    }
+    _controller.text = text;
+    _controller.selection = TextSelection.collapsed(offset: text.length);
+    _focusNode.requestFocus();
+  }
+
+  void refreshContextPreview() {
+    _previewTimer?.cancel();
+    final version = ++_previewVersion;
+    setState(() {
+      _preview = null;
+      _previewError = null;
+    });
+    final callback = widget.onPreviewContext;
+    if (callback == null) {
+      return;
+    }
+    _previewTimer =
+        Timer(const Duration(milliseconds: ContextConfig.previewDebounceMs),
+            () async {
+      try {
+        final preview = await callback(
+            _controller.text,
+            _documents.where((d) => d.isReady).toList(),
+            _selectedImages.length);
+        if (mounted && version == _previewVersion) {
+          setState(() {
+            _preview = preview;
+            _previewError = null;
+          });
+        }
+      } catch (error) {
+        if (mounted && version == _previewVersion) {
+          setState(() {
+            _preview = null;
+            _previewError = error.toString();
+          });
+        }
+      }
+    });
+  }
 
   static const int maxImages = 5;
   static const int maxDocuments = 5;
@@ -61,18 +251,81 @@ class ChatInputState extends State<ChatInput> {
   void initState() {
     super.initState();
     _controller.addListener(_onTextChanged);
+    if (widget.draftId != null) {
+      unawaited(_restoreDraft(widget.draftId!));
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.draftId != oldWidget.draftId) {
+      final initialDraft = oldWidget.draftId == null ? _snapshot() : null;
+      if (initialDraft != null &&
+          !initialDraft.isEmpty &&
+          widget.draftId != null) {
+        _drafts.remember(widget.draftId!, initialDraft);
+      }
+      _conversationVersion++;
+      _draftTimer?.cancel();
+      if (oldWidget.draftId != null && !_restoringDraft) {
+        unawaited(_saveSnapshot(oldWidget.draftId!, _snapshot()));
+      }
+      _draftVersion++;
+      _settingDraft = true;
+      _controller.clear();
+      _settingDraft = false;
+      _selectedImages = [];
+      _documents.clear();
+      _imageReads.clear();
+      _pendingExtractions = 0;
+      _pendingDocumentActivation.clear();
+      _draftWarning = null;
+      _restoringDraft = false;
+      if (widget.draftId != null) {
+        unawaited(_restoreDraft(widget.draftId!,
+            activateDocuments: initialDraft?.documents.isNotEmpty == true));
+      }
+    }
+    if (oldWidget.busy &&
+        !widget.busy &&
+        _pendingDocumentActivation.isNotEmpty) {
+      final documents = List<DocumentAttachment>.of(_pendingDocumentActivation);
+      _pendingDocumentActivation.clear();
+      final conversationVersion = _conversationVersion;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && conversationVersion == _conversationVersion) {
+          for (final document in documents) {
+            widget.onDocumentsAttached?.call(document);
+          }
+        }
+      });
+    }
+    if (widget.contextRevision != oldWidget.contextRevision ||
+        widget.sourceRevision != oldWidget.sourceRevision) {
+      refreshContextPreview();
+    }
   }
 
   @override
   void dispose() {
+    _draftTimer?.cancel();
+    if (widget.draftId != null && !_restoringDraft) {
+      unawaited(_saveSnapshot(widget.draftId!, _snapshot()));
+    }
+    _draftVersion++;
     _controller.removeListener(_onTextChanged);
     _controller.dispose();
     _focusNode.dispose();
     _imageReads.clear();
+    _previewTimer?.cancel();
+    _previewVersion++;
     super.dispose();
   }
 
   void _onTextChanged() {
+    _draftChanged();
+    refreshContextPreview();
     // Solo importa si hay texto o no; el contador se actualiza aparte.
     final hasText = _controller.text.isNotEmpty;
     if (hasText != _hasText) {
@@ -82,12 +335,24 @@ class ChatInputState extends State<ChatInput> {
 
   /// Añade archivos soltados o seleccionados: imágenes o documentos.
   Future<void> addFiles(List<XFile> files) async {
+    if (_restoringDraft) {
+      _showSnack(
+          'Espera a que se abra el borrador antes de adjuntar archivos.');
+      return;
+    }
     if (!widget.enabled || files.isEmpty) {
       return;
     }
 
+    final conversationId = widget.draftId;
+    final conversationVersion = _conversationVersion;
     final unsupported = <String>[];
     for (final file in files) {
+      if (!mounted ||
+          widget.draftId != conversationId ||
+          conversationVersion != _conversationVersion) {
+        return;
+      }
       final name = _displayName(file);
       if (DocumentService.isImagePath(name)) {
         if (_selectedImages.length >= maxImages) {
@@ -99,7 +364,9 @@ class ChatInputState extends State<ChatInput> {
         }
         setState(() {
           _selectedImages.add(file);
+          refreshContextPreview();
         });
+        _draftChanged();
       } else if (DocumentService.isSupportedDocument(name)) {
         if (_documents.length >= maxDocuments) {
           _showSnack('Máximo $maxDocuments documentos adjuntos.');
@@ -109,6 +376,20 @@ class ChatInputState extends State<ChatInput> {
           continue;
         }
         await _addDocument(file);
+        if (mounted &&
+            widget.draftId == conversationId &&
+            conversationVersion == _conversationVersion) {
+          final added = _documents.where(
+              (document) => document.path == file.path && document.isReady);
+          if (added.isNotEmpty) {
+            if (widget.busy) {
+              _pendingDocumentActivation.add(added.first);
+            } else {
+              widget.onDocumentsAttached?.call(added.first);
+            }
+          }
+          _draftChanged();
+        }
       } else {
         unsupported.add(name);
       }
@@ -133,6 +414,8 @@ class ChatInputState extends State<ChatInput> {
   }
 
   Future<void> _addDocument(XFile file) async {
+    final conversationId = widget.draftId;
+    final conversationVersion = _conversationVersion;
     final name = _displayName(file);
     final placeholder = DocumentAttachment(
       path: file.path,
@@ -146,13 +429,16 @@ class ChatInputState extends State<ChatInput> {
       _documents.add(placeholder);
       _pendingExtractions++;
     });
+    _draftChanged();
 
     final attachment = await DocumentService.extract(
       file.path,
       displayName: name,
     );
 
-    if (!mounted) {
+    if (!mounted ||
+        widget.draftId != conversationId ||
+        conversationVersion != _conversationVersion) {
       return;
     }
 
@@ -168,6 +454,8 @@ class ChatInputState extends State<ChatInput> {
       }
     });
 
+    refreshContextPreview();
+    _draftChanged();
     if (attachment.error != null) {
       _showSnack('${attachment.name}: ${attachment.error}');
     }
@@ -189,6 +477,7 @@ class ChatInputState extends State<ChatInput> {
 
   /// Abre el diálogo del sistema para elegir documentos o imágenes.
   Future<void> _pickFiles() async {
+    final conversationVersion = _conversationVersion;
     try {
       final typeGroup = XTypeGroup(
         label: 'Documentos e imágenes',
@@ -198,6 +487,9 @@ class ChatInputState extends State<ChatInput> {
         ],
       );
       final files = await openFiles(acceptedTypeGroups: [typeGroup]);
+      if (!mounted || conversationVersion != _conversationVersion) {
+        return;
+      }
       if (files.isNotEmpty) {
         await addFiles(files);
       }
@@ -207,6 +499,8 @@ class ChatInputState extends State<ChatInput> {
   }
 
   Future<void> _pickImage(ImageSource source) async {
+    final conversationId = widget.draftId;
+    final conversationVersion = _conversationVersion;
     try {
       if (source == ImageSource.gallery) {
         final List<XFile> images = await _imagePicker.pickMultiImage(
@@ -214,9 +508,16 @@ class ChatInputState extends State<ChatInput> {
           maxHeight: 2048,
           imageQuality: 85,
         );
+        if (!mounted ||
+            widget.draftId != conversationId ||
+            conversationVersion != _conversationVersion) {
+          return;
+        }
 
         for (final image in images) {
-          if (_selectedImages.length >= maxImages) break;
+          if (_selectedImages.length >= maxImages) {
+            break;
+          }
           setState(() {
             _selectedImages.add(image);
           });
@@ -228,6 +529,11 @@ class ChatInputState extends State<ChatInput> {
           maxHeight: 2048,
           imageQuality: 85,
         );
+        if (!mounted ||
+            widget.draftId != conversationId ||
+            conversationVersion != _conversationVersion) {
+          return;
+        }
 
         if (image != null) {
           setState(() {
@@ -235,6 +541,8 @@ class ChatInputState extends State<ChatInput> {
           });
         }
       }
+      _draftChanged();
+      refreshContextPreview();
     } catch (e) {
       debugPrint('Error picking image: $e');
       if (mounted) {
@@ -247,13 +555,17 @@ class ChatInputState extends State<ChatInput> {
     setState(() {
       final removedImage = _selectedImages.removeAt(index);
       _imageReads.remove(removedImage.path);
+      refreshContextPreview();
     });
+    _draftChanged();
   }
 
   void _removeDocument(int index) {
     setState(() {
       _documents.removeAt(index);
+      refreshContextPreview();
     });
+    _draftChanged();
   }
 
   Future<Uint8List> _imageBytes(int index) {
@@ -263,32 +575,60 @@ class ChatInputState extends State<ChatInput> {
 
   bool get _canSend =>
       widget.enabled &&
+      !_restoringDraft &&
+      !_submitting &&
+      widget.connected &&
+      (_selectedImages.isEmpty || widget.supportsVision == true) &&
       !widget.busy &&
       _pendingExtractions == 0 &&
       (_controller.text.trim().isNotEmpty ||
           _selectedImages.isNotEmpty ||
           _documents.any((document) => document.isReady));
 
-  void _sendMessage() {
-    if (!_canSend) return;
+  Future<void> _sendMessage() async {
+    if (!_canSend) {
+      return;
+    }
 
     final text = _controller.text.trim();
-    final hasImages = _selectedImages.isNotEmpty;
+    final images = List<XFile>.of(_selectedImages);
     final documents = _documents.where((document) => document.isReady).toList();
 
-    widget.onSendMessage(
-      text,
-      hasImages ? _selectedImages : null,
-      documents.isEmpty ? null : documents,
-    );
-
-    _controller.clear();
-    setState(() {
-      _selectedImages = [];
-      _imageReads.clear();
-      _documents.clear();
-      _hasText = false;
-    });
+    final id = widget.draftId;
+    final version = _draftVersion;
+    setState(() => _submitting = true);
+    try {
+      final submit = widget.onSubmit;
+      final accepted = submit == null
+          ? true
+          : await submit(text, images.isEmpty ? null : images,
+              documents.isEmpty ? null : documents);
+      if (submit == null) {
+        widget.onSendMessage?.call(text, images.isEmpty ? null : images,
+            documents.isEmpty ? null : documents);
+      }
+      if (!accepted ||
+          !mounted ||
+          widget.draftId != id ||
+          version != _draftVersion) {
+        return;
+      }
+      _draftTimer?.cancel();
+      _controller.clear();
+      setState(() {
+        _selectedImages = [];
+        _imageReads.clear();
+        _documents.clear();
+        _hasText = false;
+      });
+      await saveDraft();
+    } catch (error) {
+      _showSnack('No se pudo enviar: $error');
+    } finally {
+      if (mounted) {
+        setState(() => _submitting = false);
+      }
+    }
   }
 
   /// Enter envía; Shift+Enter sigue insertando un salto de línea.
@@ -300,7 +640,9 @@ class ChatInputState extends State<ChatInput> {
 
     final value = _controller.value;
     final selection = value.selection;
-    if (!selection.isValid) return;
+    if (!selection.isValid) {
+      return;
+    }
     final text = value.text.replaceRange(
       selection.start,
       selection.end,
@@ -331,6 +673,47 @@ class ChatInputState extends State<ChatInput> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (_documents.isNotEmpty) _buildDocumentPreview(),
+          if (_preview?.historyPartial == true)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text(
+                  'Parte del historial guardado queda fuera de este envío.',
+                  style: TextStyle(fontSize: 12, color: colorScheme.tertiary)),
+            ),
+          if (_draftWarning != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text(_draftWarning!,
+                  style: TextStyle(fontSize: 12, color: colorScheme.tertiary)),
+            ),
+          if (_selectedImages.isNotEmpty && widget.supportsVision != true)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(widget.supportsVision == null
+                        ? 'No se ha comprobado si el modelo admite imágenes.'
+                        : 'Este modelo no admite imágenes.'),
+                    if (widget.onChooseVisionModel != null)
+                      TextButton(
+                          onPressed:
+                              widget.busy ? null : widget.onChooseVisionModel,
+                          child: const Text('Elegir modelo compatible')),
+                  ]),
+            ),
+          if (_documents.isEmpty &&
+              (_preview?.documents.text.isNotEmpty ?? false))
+            Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: _buildContextMeter(Theme.of(context).colorScheme)),
+          if (_previewError != null)
+            Padding(
+                padding: const EdgeInsets.all(8),
+                child: Text(_previewError!,
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error))),
           if (_selectedImages.isNotEmpty) _buildImagePreview(),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -433,10 +816,13 @@ class ChatInputState extends State<ChatInput> {
 
   /// Barra con el presupuesto de contexto que ocupan los documentos.
   Widget _buildContextMeter(ColorScheme colorScheme) {
-    const maxChars = DocumentService.maxTotalChars;
-    final used = DocumentService.contextCharsFor(_documents);
-    final ratio = (used / maxChars).clamp(0.0, 1.0);
-    final isFull = used >= maxChars;
+    final maxChars =
+        _preview?.documentBudgetChars ?? DocumentService.maxTotalChars;
+    final used = _preview?.documents.chars ??
+        DocumentService.contextCharsFor(_documents);
+    final ratio = maxChars <= 0 ? 0.0 : (used / maxChars).clamp(0.0, 1.0);
+    final isFull = _preview?.documents.isPartial ??
+        DocumentService.isContextTruncated(_documents);
     final color = isFull
         ? colorScheme.error
         : ratio >= 0.75
@@ -453,9 +839,10 @@ class ChatInputState extends State<ChatInput> {
             Expanded(
               child: Text(
                 isFull
-                    ? 'Contexto lleno: los últimos documentos se recortarán'
+                    ? 'Contexto parcial: se seleccionan fragmentos del texto'
                     : 'Contexto de documentos: ${_formatChars(used)} de '
-                        '${_formatChars(maxChars)}',
+                        '${_formatChars(maxChars)} caracteres'
+                        '${_preview == null ? ' (estimación)' : ' · ≈${_preview!.estimatedPromptTokens}/${_preview!.profile.tokens} tokens'}',
                 style: TextStyle(
                   fontSize: 12,
                   color:
@@ -480,7 +867,9 @@ class ChatInputState extends State<ChatInput> {
   }
 
   String _formatChars(int value) {
-    if (value < 1000) return '$value';
+    if (value < 1000) {
+      return '$value';
+    }
     final thousands = (value / 1000).toStringAsFixed(1);
     return '${thousands.replaceAll('.0', '')} mil';
   }
@@ -688,14 +1077,14 @@ class ChatInputState extends State<ChatInput> {
   }
 
   Widget _buildAttachButton(ColorScheme colorScheme, bool isConnected) {
-    final canAttach = isConnected && widget.enabled;
+    final canAttach = widget.enabled && !_restoringDraft;
 
     return PopupMenuButton<_AttachAction>(
       enabled: canAttach,
       icon: const Icon(Icons.attach_file),
       tooltip: canAttach
           ? 'Adjuntar archivo, imagen o documento'
-          : 'Conecta Ollama para adjuntar',
+          : 'Preparando borrador…',
       onSelected: (action) {
         switch (action) {
           case _AttachAction.file:
@@ -760,14 +1149,14 @@ class ChatInputState extends State<ChatInput> {
       child: TextField(
         controller: _controller,
         focusNode: _focusNode,
-        enabled: widget.enabled && isConnected,
+        enabled: widget.enabled && !_restoringDraft,
         maxLines: 5,
         minLines: 1,
         textInputAction: TextInputAction.newline,
         decoration: InputDecoration(
           hintText: widget.hintText ??
               (!isConnected
-                  ? 'Conecta Ollama primero…'
+                  ? 'Prepara tu mensaje; conecta Ollama para enviarlo…'
                   : widget.busy
                       ? 'Generando… puedes escribir el siguiente mensaje'
                       : 'Escribe un mensaje…'),
@@ -792,7 +1181,18 @@ class ChatInputState extends State<ChatInput> {
 
     return IconButton.filled(
       onPressed: canSend ? _sendMessage : null,
-      tooltip: canSend ? 'Enviar mensaje (Enter)' : 'Enviando…',
+      tooltip: canSend
+          ? 'Enviar mensaje (Enter)'
+          : !isConnected
+              ? 'Conecta Ollama para enviar'
+              : widget.busy || _submitting
+                  ? 'Espera o detén la respuesta actual'
+                  : _pendingExtractions > 0
+                      ? 'Leyendo documentos…'
+                      : _selectedImages.isNotEmpty &&
+                              widget.supportsVision != true
+                          ? 'Elige un modelo que admita imágenes'
+                          : 'Escribe un mensaje o adjunta un archivo',
       icon: const Icon(Icons.send_rounded),
     );
   }

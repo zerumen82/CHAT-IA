@@ -2,25 +2,40 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/document_attachment.dart';
+import '../services/document_store_service.dart';
 
 /// Abre un visor con el texto exacto que se envía al modelo para [document].
 ///
 /// Sirve para comprobar que el documento se leyó bien y ver qué parte se
 /// recortó por límite de contexto.
 Future<void> showDocumentTextDialog(
-  BuildContext context,
-  DocumentAttachment document,
-) {
+    BuildContext context, DocumentAttachment document,
+    {bool exactSelection = false}) async {
+  if (!exactSelection && document.storageId != null) {
+    try {
+      final full = await DocumentStoreService.instance.hydrate(document);
+      document = full.copyWith(text: full.extractedText ?? full.text);
+    } catch (error) {
+      document = document.copyWith(
+          error: 'No se pudo leer el texto conservado: $error');
+    }
+  }
+  if (!context.mounted) {
+    return;
+  }
   return showDialog<void>(
     context: context,
-    builder: (dialogContext) => _DocumentTextDialog(document: document),
+    builder: (dialogContext) =>
+        _DocumentTextDialog(document: document, exactSelection: exactSelection),
   );
 }
 
 class _DocumentTextDialog extends StatelessWidget {
   final DocumentAttachment document;
 
-  const _DocumentTextDialog({required this.document});
+  final bool exactSelection;
+  const _DocumentTextDialog(
+      {required this.document, required this.exactSelection});
 
   @override
   Widget build(BuildContext context) {
@@ -103,9 +118,12 @@ class _DocumentTextDialog extends StatelessWidget {
   ) {
     final details = <String>[
       if (document.sizeBytes > 0) document.sizeFormatted,
-      if (text.isNotEmpty) '${text.length} caracteres enviados',
-      if (document.truncated)
-        'recortado de ${document.originalChars} caracteres',
+      if (text.isNotEmpty)
+        '${text.length} caracteres ${exactSelection ? 'enviados' : 'extraídos/conservados'}',
+      if (document.extractionTruncated)
+        'extracción parcial de ${document.originalChars} caracteres',
+      if (!exactSelection)
+        'La selección enviada se muestra en Ver contexto enviado',
     ];
 
     if (details.isEmpty) {

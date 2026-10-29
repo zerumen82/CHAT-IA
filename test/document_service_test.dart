@@ -61,6 +61,60 @@ Uint8List _buildTestWorkbook() {
   return ZipEncoder().encodeBytes(archive);
 }
 
+/// Libro de varias hojas y filas, para comprobar cómo se reparte el
+/// presupuesto de contexto entre todas las hojas.
+Uint8List _buildWideWorkbook({required int sheetCount, required int rowCount}) {
+  final archive = Archive();
+
+  void add(String name, String content) {
+    archive.addFile(ArchiveFile.string(name, content));
+  }
+
+  final sheetTags = <String>[];
+  final relationships = <String>[];
+  for (var sheet = 1; sheet <= sheetCount; sheet++) {
+    sheetTags.add(
+      '<sheet name="Hoja$sheet" sheetId="$sheet" r:id="rId$sheet"/>',
+    );
+    relationships.add('<Relationship Id="rId$sheet" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+        'Target="worksheets/sheet$sheet.xml"/>');
+
+    final rows = StringBuffer();
+    for (var row = 1; row <= rowCount; row++) {
+      rows.write('<row r="$row">');
+      for (var column = 0; column < 6; column++) {
+        final letter = String.fromCharCode(65 + column);
+        rows.write('<c r="$letter$row" t="inlineStr"><is><t>'
+            'Hoja$sheet-fila$row-col$column</t></is></c>');
+      }
+      rows.write('</row>');
+    }
+    add(
+      'xl/worksheets/sheet$sheet.xml',
+      '<?xml version="1.0" encoding="UTF-8"?>'
+          '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+          '<sheetData>$rows</sheetData></worksheet>',
+    );
+  }
+
+  add(
+    'xl/workbook.xml',
+    '<?xml version="1.0" encoding="UTF-8"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets>${sheetTags.join()}</sheets></workbook>',
+  );
+  add(
+    'xl/_rels/workbook.xml.rels',
+    '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '${relationships.join()}</Relationships>',
+  );
+
+  return ZipEncoder().encodeBytes(archive);
+}
+
 Uint8List _buildTestDocx() {
   final archive = Archive();
   archive.addFile(
@@ -149,7 +203,8 @@ void main() {
 
   test('truncates documents longer than the context budget', () async {
     final file = File('${temporaryDirectory.path}/largo.txt');
-    await file.writeAsString(List.filled(9000, 'a').join());
+    final sourceChars = DocumentService.maxCharsPerDocument + 3000;
+    await file.writeAsString(List.filled(sourceChars, 'a').join());
 
     final document = await DocumentService.extract(file.path);
 
@@ -159,7 +214,9 @@ void main() {
       lessThanOrEqualTo(DocumentService.maxCharsPerDocument),
     );
     expect(document.text, contains('recortado'));
-    expect(document.originalChars, 9000);
+    expect(document.originalChars, sourceChars);
+    expect(document.extractedText!.length, sourceChars);
+    expect(document.extractionTruncated, isFalse);
     expect(document.isReady, isTrue);
   });
 
@@ -319,14 +376,21 @@ void main() {
       ),
     ];
 
+    // El medidor cuenta también el preámbulo, no solo texto y cabeceras.
     expect(
       DocumentService.contextCharsFor(documents, maxChars: 500),
-      200,
+      DocumentService.buildAttachmentContext(documents, maxChars: 500).length,
     );
     expect(
+        DocumentService.isContextTruncated(documents, maxChars: 500), isFalse);
+
+    // Con 150 caracteres el reparto no da para los dos documentos.
+    expect(
       DocumentService.contextCharsFor(documents, maxChars: 150),
-      150,
+      lessThanOrEqualTo(150),
     );
+    expect(
+        DocumentService.isContextTruncated(documents, maxChars: 150), isTrue);
   });
 
   test('builds the attachment context within the character budget', () {
@@ -361,10 +425,131 @@ void main() {
       maxChars: 40,
     );
 
-    expect(context, contains('Documento 1: primero.txt'));
-    expect(context, contains('recortado'));
-    expect(context, contains('omitido(s) por límite de contexto'));
+    expect(context.length, lessThanOrEqualTo(40));
+    expect(context, isEmpty);
+    expect(DocumentService.isContextTruncated(documents, maxChars: 40), isTrue);
     expect(context, isNot(contains('segundo.txt')));
     expect(context, isNot(contains('fallido.docx')));
+  });
+
+  test('reads a real Excel 97-2003 (.xls) workbook', () async {
+    final document = await DocumentService.extract(
+      'test/fixtures/ventas_ligero.xls',
+    );
+
+    expect(document.error, isNull);
+    expect(document.kind, DocumentKind.spreadsheet);
+    expect(document.isReady, isTrue);
+    expect(document.text, contains('Hoja "Ventas"'));
+    expect(document.text, contains('Hoja "Gastos"'));
+    expect(document.text, contains('Pérez, Ana | Manzanas | 12 | 12.5'));
+    expect(document.text, contains('Núñez, Sofía'));
+    expect(document.text, contains('Transporte | 45.2'));
+    expect(document.text, contains('verdadero'));
+  });
+
+  test('reads a .xls file that is really an .xlsx renamed', () async {
+    final file = File('${temporaryDirectory.path}/renombrado.xls');
+    await file.writeAsBytes(_buildTestWorkbook());
+
+    final document = await DocumentService.extract(file.path);
+
+    expect(document.error, isNull);
+    expect(document.text, contains('Fila 2: Manzanas | 12.5'));
+  });
+
+  test('keeps every sheet of a large workbook within the budget', () async {
+    final file = File('${temporaryDirectory.path}/trimestral.xlsx');
+    await file.writeAsBytes(_buildWideWorkbook(sheetCount: 3, rowCount: 120));
+
+    final document = await DocumentService.extract(file.path);
+
+    expect(document.error, isNull);
+    expect(document.truncated, isTrue);
+    expect(document.originalChars,
+        greaterThan(DocumentService.maxCharsPerDocument));
+    expect(document.charCount,
+        lessThanOrEqualTo(DocumentService.maxCharsPerDocument));
+    for (final sheet in ['Hoja1', 'Hoja2', 'Hoja3']) {
+      expect(document.text, contains('Hoja "$sheet"'));
+    }
+    expect(
+      RegExp(r'\[Hoja recortada: se muestran \d+ de \d+ filas\]')
+          .allMatches(document.text!)
+          .length,
+      3,
+    );
+    expect(document.text, isNot(contains('Fila 120:')));
+  });
+
+  test('shares the context budget between several attached files', () {
+    final documents = [
+      for (var index = 1; index <= 3; index++)
+        DocumentAttachment(
+          path: 'archivo$index.xlsx',
+          name: 'archivo$index.xlsx',
+          kind: DocumentKind.spreadsheet,
+          sizeBytes: 10,
+          text: List.filled(9000, String.fromCharCode(96 + index)).join(),
+          originalChars: 9000,
+        ),
+    ];
+
+    final context = DocumentService.buildAttachmentContext(documents);
+
+    for (var index = 1; index <= 3; index++) {
+      expect(context, contains('archivo$index.xlsx'));
+      expect(context, contains('Documento $index: archivo$index.xlsx'));
+    }
+    expect(context, isNot(contains('omitido(s) por límite de contexto')));
+    expect(
+      DocumentService.contextCharsFor(documents),
+      lessThanOrEqualTo(DocumentService.maxTotalChars),
+    );
+  });
+
+  test('reports omitted columns during extraction', () async {
+    final file = File('${temporaryDirectory.path}/ancho.csv');
+    await file.writeAsString(List.generate(
+            DocumentService.maxColumnsPerRow + 3, (index) => 'celda$index')
+        .join(','));
+    final document = await DocumentService.extract(file.path);
+    expect(document.error, isNull);
+    expect(document.extractedText, contains('Columnas omitidas: 3'));
+    expect(document.extractionTruncated, isTrue);
+  });
+
+  test('rejects declared ZIP expansion before decompression', () async {
+    final bytes = _buildTestDocx();
+    final data = ByteData.sublistView(bytes);
+    for (var offset = 0; offset < bytes.length - 28; offset++) {
+      if (data.getUint32(offset, Endian.little) == 0x02014b50) {
+        data.setUint32(offset + 24, 40 * 1024 * 1024, Endian.little);
+        break;
+      }
+    }
+    final file = File('${temporaryDirectory.path}/expansion.docx');
+    await file.writeAsBytes(bytes);
+    final document = await DocumentService.extract(file.path);
+    expect(document.isReady, isFalse);
+    expect(document.error, contains('expansión ZIP'));
+  });
+
+  test('rejects compressed content larger than a falsified ZIP header',
+      () async {
+    final bytes = _buildTestDocx();
+    final data = ByteData.sublistView(bytes);
+    for (var offset = 0; offset < bytes.length - 28; offset++) {
+      if (data.getUint32(offset, Endian.little) == 0x02014b50) {
+        data.setUint32(offset + 24, 1, Endian.little);
+        break;
+      }
+    }
+    final file = File('${temporaryDirectory.path}/falsificado.docx');
+    await file.writeAsBytes(bytes);
+    final document = await DocumentService.extract(file.path);
+    expect(document.isReady, isFalse);
+    expect(document.text, isNull);
+    expect(document.error, isNotEmpty);
   });
 }

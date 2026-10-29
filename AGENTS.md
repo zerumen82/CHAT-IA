@@ -1,7 +1,7 @@
 # AGENTS.md
 
 > Guía para agentes de IA y nuevos colaboradores que trabajen en **LightChat**.
-> Última revisión: 2026-10-24. El estado persistente (deuda, decisiones, historial) vive en [`MEMORY.md`](MEMORY.md).
+> Última revisión: 2026-10-29. El estado persistente (deuda, decisiones, historial) vive en [`MEMORY.md`](MEMORY.md).
 
 ---
 
@@ -21,7 +21,7 @@ Ejecutar siempre desde la raíz del repo (`lightchat/`):
 ```bash
 flutter pub get        # dependencias (obligatorio en entorno limpio)
 flutter analyze        # lints — línea base actual: 0 incidencias (~40 s)
-flutter test           # 58 pruebas (todas deben pasar; ver §7)
+flutter test           # 138 pruebas + 1 opt-in live (ver §7)
 flutter run            # desarrollo con hot-restart
 flutter build windows  # release Windows (también: macos | linux)
 ```
@@ -58,7 +58,7 @@ lib/
 │   ├── context_service.dart         # migración del historial antiguo + detección de 8 idiomas
 │   ├── model_catalog_service.dart   # catálogo online de modelos (con caché)
 │   ├── hardware_detector_service.dart # RAM/VRAM para recomendaciones (solo tests)
-│   ├── document_service.dart        # texto de PDF/XLSX/DOCX/PPTX/HTML/XML/CSV/TSV/TXT
+│   ├── document_service.dart        # texto de PDF/XLSX/XLS/DOCX/PPTX/HTML/XML/CSV/TSV/TXT
 │   └── theme_service.dart           # tema claro/oscuro
 └── widgets/                     # chat_input, message_bubble, assistant_markdown,
                                  # conversation_sidebar, document_text_dialog, model_*,
@@ -74,7 +74,7 @@ Los widgets **no** hacen HTTP directo; los services **no** dibujan UI.
 
 | Dónde | Qué contiene | Notas |
 |---|---|---|
-| `lib/config/vllm_config.dart` → `OllamaConfig` | `serverUrl` (`http://localhost:11434`, mutable), `defaultPort`, `timeoutSeconds` 120, `maxContextTokens` 8192 (fijo), `maxResponseTokens` 2048, `defaultTemperature` 0.7, `documentTemperature` 0.2, `preferredModels`, `multimodalModels` (`llava`…), `isUncensoredModel`, `isThinkingModel` | Aunque el archivo se llama `vllm_config`, es la config vigente de Ollama; el `typedef VllmConfig = OllamaConfig` mantiene compatibilidad de nombres. **No** volver a hacer `num_ctx` condicional: Ollama recarga el modelo |
+| `lib/config/vllm_config.dart` → `OllamaConfig` | `serverUrl` (`http://localhost:11434`, mutable), `defaultPort`, `timeoutSeconds` 120, `maxContextTokens` 16384 (fijo), `maxResponseTokens` 2048, `defaultTemperature` 0.7, `documentTemperature` 0.2, `preferredModels`, `multimodalModels` (`llava`…), `isUncensoredModel`, `isThinkingModel` | Aunque el archivo se llama `vllm_config`, es la config vigente de Ollama; el `typedef VllmConfig = OllamaConfig` mantiene compatibilidad de nombres. **No** volver a hacer `num_ctx` condicional: Ollama recarga el modelo. Los límites de `DocumentService` (16.000 por documento, 24.000 por mensaje) están calculados para 16.384 tokens: si se suben, subir también `maxContextTokens` |
 | `SharedPreferences` (prefs del usuario) | claves reales en uso: `ollama_host`, `installed_models`, `model_catalog_cache`, `model_catalog_last_update`, `user_language`, `lightchat_conversations_v1` (índice), `lightchat_active_conversation_v1`, `lightchat_conversation_messages_v1_<id>`, `chat_messages` (historial antiguo, solo migración) | leídas/escritas desde `ollama_service`, `model_catalog_service`, `context_service`, `conversation_service`, `theme_service` |
 
 ## 5. Common tasks (¿Dónde tocar para cada tarea?)
@@ -85,8 +85,9 @@ Los widgets **no** hacen HTTP directo; los services **no** dibujan UI.
 | Cambiar URL o puerto de Ollama | `OllamaConfig.serverUrl` + clave `ollama_host` (aplicada en `ollama_service.dart`) |
 | Añadir o modificar un endpoint de Ollama | `lib/services/ollama_service.dart` |
 | UI del chat (burbujas, input, adjuntar imágenes) | `lib/screens/chat_screen.dart`, `lib/widgets/chat_input.dart`, `message_bubble.dart`, `image_*` |
-| Documentos adjuntos (arrastrar y soltar, extracción PDF/XLSX/DOCX/PPTX/HTML/XML/CSV/TSV) | `lib/services/document_service.dart`, `lib/models/document_attachment.dart`, `lib/widgets/chat_input.dart`, `lib/screens/chat_screen.dart` (`DropTarget`) |
-| Ver el texto enviado de un documento / medidor de contexto | `lib/widgets/document_text_dialog.dart`, `ChatInput._buildContextMeter`, `DocumentService.contextCharsFor` |
+| Documentos adjuntos (arrastrar y soltar, extracción PDF/XLSX/XLS/DOCX/PPTX/HTML/XML/CSV/TSV) | `lib/services/document_service.dart`, `lib/models/document_attachment.dart`, `lib/widgets/chat_input.dart`, `lib/screens/chat_screen.dart` (`DropTarget`) |
+| Cómo se reparte el texto de los adjuntos entre archivos y hojas | `DocumentService._shareBudget` / `_documentSlices` / `_renderSheetTexts` (reparto igualitario con marcas `[Hoja recortada: N de M filas]`) |
+| Ver el texto enviado de un documento / medidor de contexto | `lib/widgets/document_text_dialog.dart`, `ChatInput._buildContextMeter`, `DocumentService.contextCharsFor` + `isContextTruncated` |
 | Respuestas en Markdown y bloques de código copiables | `lib/widgets/assistant_markdown.dart` (+ `flutter_markdown_plus` en `pubspec.yaml`) |
 | Conversaciones guardadas (barra lateral, renombrar, borrar) | `lib/services/conversation_service.dart`, `lib/models/conversation.dart`, `lib/widgets/conversation_sidebar.dart`, `ChatServiceOllama` (`newConversation`, `selectConversation`, `deleteConversation`) |
 | Regenerar / editar un mensaje | `ChatServiceOllama.regenerateLastResponse`, `editAndResend`, `lib/widgets/message_bubble.dart` (`onRegenerate`, `onEdit`) |
@@ -109,13 +110,13 @@ Los widgets **no** hacen HTTP directo; los services **no** dibujan UI.
 
 ## 7. Testing & Verification (Pruebas y verificación mínima)
 
-**Estado actual:** todas las suites pasan (58 pruebas): chat/streaming, reintento, regenerar/editar, conversaciones, documentos (incluidas fechas de Excel y DOCX/PPTX/HTML/XML/TSV), idioma, modelos sin censura, recomendaciones de hardware, temas, Markdown, visor de documentos y pantalla real de chat. `test/widget_test.dart` ya no es la plantilla de Flutter.
+**Estado actual (2026-10-29):** 138 pruebas pasan y una prueba real de Ollama es opt-in: chat/streaming, cancelación/timeouts/fin/parciales, capacidades, fuentes y rutas legacy, borradores/reinicio/concurrencia, cálculo tabular, exportación, contexto, idioma, temas y UI. `test/widget_test.dart` prueba la pantalla real. La evidencia live actual se guarda fuera de Git en `.dart_tool/live-evidence-20261029`.
 
 Checklist de verificación antes de dar un cambio por terminado:
 
 1. `flutter pub get` (si es entorno limpio)
 2. `flutter analyze` → **cero errores** (warnings/info: no aumentarlos; ideal: reducir)
-3. `flutter test` → deben pasar todos (hoy 58, incluidos documentos, idioma, reintento, conversaciones y Markdown); **cualquier test nuevo debe pasar**
+3. `flutter test --no-pub` → deben pasar todos (hoy 138 + 1 live omitido por defecto); **cualquier test nuevo debe pasar**
 4. Prueba manual con Ollama corriendo: `flutter run` → enviar un mensaje y ver streaming + comprobar el indicador de estado
 
 Prioridad de cobertura futura (hoy 0 tests reales): lógica pura en `context_service`, parsing/caché de `model_catalog_service`, `hardware_detector_service`.
@@ -154,3 +155,35 @@ Ya existe deuda histórica (detalle en `MEMORY.md`); **no aumentarla**:
 | [`README.md`](README.md) | guía de usuario/instalación |
 | [`MIGRATION_OLLAMA.md`](MIGRATION_OLLAMA.md) | guía técnica de Ollama (2026-03-02; parte de "archivos obsoletos" ya no aplica) |
 | `plans/` | planes históricos (feb-2026, era vLLM): contexto, no especificación vigente |
+
+## 11. Contexto, almacén y archivos (2026-10-26)
+
+- Configuración activa nueva: context_config.dart, document_config.dart y export_config.dart. OllamaConfig.maxContextTokens sigue como compatibilidad/default16k; el envío efectivo usa ContextProfileService (límite nativo, perfil persistente hasta32k, desconocido4k). No cambiar num_ctx por presencia de documentos.
+- DocumentStoreService conserva texto completo acotado e índice de referencias en carpeta elegida por el usuario. DocumentContextService construye la selección con búsqueda léxica local; ContextSnapshotService guarda selección exacta fuera de preferencias. No volver a serializar extractedText/contextText grandes en SharedPreferences.
+- ExportService y GeneratedFileService crean formatos auténticos (TXT/MD/PDF/DOCX y XLSX para herramientas). Widgets/file_actions y context_settings_dialog gestionan los selectores. Tool calls sólo datos estructurados; nunca ejecutar código del modelo ni aceptar rutas arbitrarias.
+- XLSX/DOCX: declarar namespace por defecto con atributo xmlns explícito. namespaceUris con prefijo vacío generaba xmlns:= inválido tolerado por parser Dart pero rechazado por Office. Validar con lector independiente/apertura real.
+- Limpiar/eliminar conversaciones también retira referencias/archivos locales exclusivos. Mantener guard de operación durante todos los awaits para impedir vaciar otra conversación. No borrar originales.
+- Prueba real opt-in: flutter test --no-pub --dart-define=LIGHTCHAT_LIVE=true test/live_documents_test.dart; no ejecutar junto con build, por las recargas/IO de Ollama. Evidencia en .dart_tool/live-evidence-20261026.
+- `ChatInput.contextRevision` recibe modelo, conversación y versión del historial desde el Selector. `didUpdateWidget` invalida/refresca la vista previa; `_previewVersion` impide publicar resultados antiguos. Mantener la regresión `test/chat_input_context_test.dart` al tocar el medidor.
+
+## 12. Interacción y borradores (2026-10-29)
+
+- ChatConfig configura conexión/inactividad del stream. Cada petición tiene su
+  cliente cancelable; EOF sin done es interrupción. Conservar texto parcial y
+  error por separado, finishReason y fases observadas. No inventar carga/porcentaje.
+- ContextProfileService verifica capacidades de imágenes/herramientas con metadata.
+  No deducir visión del nombre. Adjuntar activa documental en su evento de UI;
+  preview/send respetan General o exclusiones elegidas después.
+- sourceKey normaliza rutas Windows. Aplicar la misma identidad a fuentes, borrador,
+  exclusiones y procedencia histórica; no reintroducir fuentes desmarcadas por
+  diferencias de mayúsculas/separadores. No podar historial persistido automáticamente.
+- DraftService guarda contenido completo en archivos por chat; prefs solo marcador
+  con ubicación. Fallback local del SO cuando falta biblioteca, dirty/identidad,
+  tombstones al borrar, clear al vaciar. Cierre hace flush antes y después de liberar
+  GPU; mantener ventana si no pudo guardar. No mover/borrar originales adjuntos.
+- Cálculo tabular usa DocumentService.readSpreadsheet y SpreadsheetAnalysisService
+  en isolate, con decimales BigInt y exclusiones explícitas. Rechazar límites o
+  lectura incompleta. BIFF8 no sirve para calcular con excel2003 porque oculta
+  fórmulas como cachés; XLSX renombrado sí se reconoce. No ejecutar fórmulas/modelo.
+- Suite actual: 138 PASS + 1 live opt-in; live real separado PASS. Evidencia de
+  2026-10-29 en .dart_tool/live-evidence-20261029 y logs ui-improvements-*.

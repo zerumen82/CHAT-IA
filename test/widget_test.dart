@@ -12,12 +12,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:lightchat/main.dart';
 import 'package:lightchat/models/document_attachment.dart';
 import 'package:lightchat/models/message.dart';
 import 'package:lightchat/widgets/chat_input.dart';
 import 'package:lightchat/widgets/message_bubble.dart';
+import 'package:lightchat/services/document_store_service.dart';
+import 'package:lightchat/services/draft_service.dart';
+import 'package:lightchat/services/ollama_service.dart';
 
 double _contrastRatio(Color first, Color second) {
   final firstLuminance = first.computeLuminance();
@@ -30,12 +34,32 @@ double _contrastRatio(Color first, Color second) {
 }
 
 void main() {
+  late Directory draftDirectory;
+  setUpAll(() async {
+    SharedPreferences.setMockInitialValues({});
+    // El sondeo del singleton pertenece al servicio, fuera del reloj fake de
+    // un widget concreto; su ciclo de vida termina con este archivo de pruebas.
+    await OllamaService.instance.initialize();
+  });
+  tearDownAll(() => OllamaService.instance.dispose());
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    draftDirectory =
+        await Directory.systemTemp.createTemp('lightchat-widget-drafts-');
+    await DocumentStoreService.instance.initialize();
+    await DocumentStoreService.instance.configureRoot(draftDirectory.path);
+  });
+  tearDown(() async {
+    await DraftService.instance.flush();
+    await draftDirectory.delete(recursive: true);
+  });
   testWidgets('renders the LightChat conversation screen', (tester) async {
-    await tester.pumpWidget(const MyApp());
+    await tester.runAsync(() => tester.pumpWidget(const MyApp()));
     await tester.pump();
 
     expect(find.text('LightChat'), findsOneWidget);
-    expect(find.text('Conecta Ollama primero…'), findsOneWidget);
+    expect(find.text('Prepara tu mensaje; conecta Ollama para enviarlo…'),
+        findsOneWidget);
 
     final app = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(app.themeMode, ThemeMode.dark);
@@ -72,7 +96,7 @@ void main() {
     }
 
     await tester.binding.setSurfaceSize(const Size(480, 640));
-    await tester.pumpWidget(const MyApp());
+    await tester.runAsync(() => tester.pumpWidget(const MyApp()));
     await tester.pump();
     expect(tester.takeException(), isNull);
     await tester.binding.setSurfaceSize(null);
@@ -102,7 +126,7 @@ void main() {
   });
 
   testWidgets('offers a free GPU action in the chat menu', (tester) async {
-    await tester.pumpWidget(const MyApp());
+    await tester.runAsync(() => tester.pumpWidget(const MyApp()));
     await tester.pump();
 
     await tester.tap(find.byIcon(Icons.more_vert));
@@ -116,7 +140,7 @@ void main() {
   testWidgets('shows the conversation sidebar only on wide windows',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(1200, 800));
-    await tester.pumpWidget(const MyApp());
+    await tester.runAsync(() => tester.pumpWidget(const MyApp()));
     await tester.pump();
 
     expect(find.text('Conversaciones'), findsOneWidget);
@@ -124,11 +148,20 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await tester.binding.setSurfaceSize(const Size(600, 800));
-    await tester.pumpWidget(const MyApp());
+    await tester.runAsync(() => tester.pumpWidget(const MyApp()));
     await tester.pump();
 
     expect(find.text('Conversaciones'), findsNothing);
     expect(tester.takeException(), isNull);
+
+    await tester.tap(find.byTooltip('Mostrar conversaciones'));
+    await tester.pumpAndSettle();
+    expect(find.text('Conversaciones'), findsOneWidget);
+    expect(
+        find.byType(TextField).evaluate().any((element) =>
+            (element.widget as TextField).decoration?.hintText ==
+            'Buscar conversaciones'),
+        isTrue);
 
     await tester.binding.setSurfaceSize(null);
   });
@@ -231,7 +264,8 @@ void main() {
 
     expect(find.text('Copiar texto'), findsOneWidget);
     expect(find.text('Contenido de prueba'), findsOneWidget);
-    expect(find.textContaining('caracteres enviados'), findsOneWidget);
+    expect(find.textContaining('caracteres extraídos/conservados'),
+        findsOneWidget);
 
     await tester.tap(find.text('Cerrar'));
     await tester.pumpAndSettle();
@@ -268,7 +302,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Texto extraído del PDF'), findsOneWidget);
-    expect(find.textContaining('caracteres enviados'), findsOneWidget);
+    expect(find.textContaining('caracteres extraídos/conservados'),
+        findsOneWidget);
     await tester.tap(find.text('Cerrar'));
     await tester.pumpAndSettle();
   });

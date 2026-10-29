@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../config/vllm_config.dart';
 import '../services/chat_service_ollama.dart';
+import '../services/context_profile_service.dart';
 
 class ModelSelector extends StatelessWidget {
   const ModelSelector({super.key});
@@ -28,7 +29,9 @@ class ModelSelector extends StatelessWidget {
                 : 'Sin conexión a Ollama',
             position: PopupMenuPosition.under,
             onSelected: (v) {
-              if (v == 'reload') chatService.loadModels();
+              if (v == 'reload') {
+                chatService.loadModels();
+              }
             },
             itemBuilder: (context) => [
               PopupMenuItem<String>(
@@ -70,7 +73,9 @@ class ModelSelector extends StatelessWidget {
             OllamaConfig.isUncensoredModel(chatService.selectedModel);
 
         return PopupMenuButton<String>(
+          enabled: !chatService.isLoading,
           tooltip:
+              '${chatService.isLoading ? 'Detén la respuesta para cambiar de modelo. ' : ''}'
               'Modelo: ${chatService.selectedModel.isNotEmpty ? chatService.selectedModel : "ninguno"}'
               '${selectedIsUncensored ? ' · Sin censura' : ''}',
           child: Container(
@@ -128,6 +133,10 @@ class ModelSelector extends StatelessWidget {
             }
           },
           itemBuilder: (context) => [
+            PopupMenuItem<String>(
+                enabled: false,
+                child: Text(_capabilities(chatService.selectedProfile))),
+            const PopupMenuDivider(),
             ...models.map((model) {
               final isSelected = model == chatService.selectedModel;
               final isUncensored = OllamaConfig.isUncensoredModel(model);
@@ -211,5 +220,16 @@ class ModelSelector extends StatelessWidget {
         );
       },
     );
+  }
+
+  String _capabilities(ModelContextProfile? profile) {
+    if (profile == null || !profile.capabilitiesKnown) {
+      return 'Capacidades por comprobar';
+    }
+    return [
+      'Texto',
+      if (profile.supportsVision) 'Imágenes',
+      if (profile.supportsTools) 'Crear archivos'
+    ].join(' · ');
   }
 }

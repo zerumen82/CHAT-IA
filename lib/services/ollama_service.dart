@@ -7,6 +7,8 @@ import 'package:html/parser.dart' as html_parser;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/chat_config.dart';
+
 /// Estado del servidor Ollama
 enum OllamaStatus {
   notInstalled,
@@ -100,28 +102,42 @@ class OllamaServerInfo {
 class OllamaChatResponse {
   final String message;
   final bool done;
+  final String thinking;
+  final String? doneReason;
+  final int? evalDuration;
   final int? totalDuration;
   final int? loadDuration;
   final int? promptEvalCount;
   final int? evalCount;
+  final List<Map<String, dynamic>> toolCalls;
 
   OllamaChatResponse({
     required this.message,
     required this.done,
+    this.thinking = '',
+    this.doneReason,
+    this.evalDuration,
     this.totalDuration,
     this.loadDuration,
     this.promptEvalCount,
     this.evalCount,
+    this.toolCalls = const [],
   });
 
   factory OllamaChatResponse.fromJson(Map<String, dynamic> json) {
     return OllamaChatResponse(
       message: json['message']?['content'] ?? json['response'] ?? '',
       done: json['done'] ?? false,
+      thinking: json['message']?['thinking'] ?? json['thinking'] ?? '',
+      doneReason: json['done_reason'],
+      evalDuration: json['eval_duration'],
       totalDuration: json['total_duration'],
       loadDuration: json['load_duration'],
       promptEvalCount: json['prompt_eval_count'],
       evalCount: json['eval_count'],
+      toolCalls: (json['message']?['tool_calls'] as List? ?? const [])
+          .map((call) => Map<String, dynamic>.from(call as Map))
+          .toList(),
     );
   }
 }
@@ -538,7 +554,7 @@ class OllamaService extends ChangeNotifier {
     }
   }
 
-  /// Generar respuesta de chat (streaming)
+  /// Cada petición posee su cliente: cancelar cierra también la conexión HTTP.
   Stream<OllamaChatResponse> generateChat({
     required String model,
     required List<OllamaMessage> messages,
@@ -546,7 +562,13 @@ class OllamaService extends ChangeNotifier {
     int? numPredict,
     int? numCtx,
     bool? think,
+    List<Map<String, dynamic>>? tools,
+    Future<void>? cancellation,
+    Duration connectionTimeout = ChatConfig.connectionTimeout,
+    Duration inactivityTimeout = ChatConfig.inactivityTimeout,
   }) async* {
+    final client = http.Client();
+    var cancelled = false;
     try {
       final request = http.Request('POST', Uri.parse('$baseUrl/api/chat'));
       request.headers['Content-Type'] = 'application/json';
@@ -555,31 +577,82 @@ class OllamaService extends ChangeNotifier {
         'messages': messages.map((m) => m.toJson()).toList(),
         'stream': true,
         if (think != null) 'think': think,
+        if (tools != null && tools.isNotEmpty) 'tools': tools,
         'options': {
           if (temperature != null) 'temperature': temperature,
           if (numPredict != null) 'num_predict': numPredict,
           if (numCtx != null) 'num_ctx': numCtx,
         },
       });
-
-      final response = await request.send();
-
-      if (response.statusCode == 200) {
-        await for (final line in response.stream
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())) {
-          if (line.trim().isEmpty) {
-            continue;
-          }
-          final data = json.decode(line) as Map<String, dynamic>;
-          yield OllamaChatResponse.fromJson(data);
-        }
-      } else {
-        throw Exception('HTTP ${response.statusCode}');
+      final sending = client.send(request).timeout(connectionTimeout,
+          onTimeout: () => throw TimeoutException(
+              'Ollama no respondió al iniciar la petición.',
+              connectionTimeout));
+      final abort = cancellation?.then<http.StreamedResponse>((_) {
+        cancelled = true;
+        client.close();
+        throw const HttpException('Petición cancelada');
+      });
+      final response = await (abort == null
+          ? sending
+          : Future.any<http.StreamedResponse>([sending, abort]));
+      if (cancelled) {
+        return;
       }
-    } catch (e) {
-      _addLog('Error en generateChat: $e');
-      rethrow;
+      if (response.statusCode != HttpStatus.ok) {
+        final body = <int>[];
+        await for (final chunk in response.stream.timeout(inactivityTimeout)) {
+          final remaining = ChatConfig.maxErrorBodyBytes - body.length;
+          body.addAll(chunk.take(remaining));
+          if (body.length >= ChatConfig.maxErrorBodyBytes) {
+            break;
+          }
+        }
+        var detail = utf8.decode(body, allowMalformed: true).trim();
+        try {
+          final decoded = jsonDecode(detail);
+          if (decoded is Map && decoded['error'] != null) {
+            detail = decoded['error'].toString();
+          }
+        } on FormatException {
+          // Un servidor puede devolver un error de texto, no JSON.
+        }
+        throw HttpException('HTTP ${response.statusCode}'
+            '${detail.isEmpty ? '' : ': $detail'}');
+      }
+      var receivedDone = false;
+      await for (final line in response.stream
+          .timeout(inactivityTimeout)
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())) {
+        if (cancelled) {
+          return;
+        }
+        if (line.trim().isEmpty) {
+          continue;
+        }
+        final data = json.decode(line) as Map<String, dynamic>;
+        if (data['error'] != null) {
+          throw StateError(data['error'].toString());
+        }
+        final item = OllamaChatResponse.fromJson(data);
+        yield item;
+        if (item.done) {
+          receivedDone = true;
+          break;
+        }
+      }
+      if (!cancelled && !receivedDone) {
+        throw const HttpException(
+            'La conexión terminó antes de confirmar la respuesta completa.');
+      }
+    } catch (error) {
+      if (!cancelled) {
+        _addLog('Error en generateChat: $error');
+        rethrow;
+      }
+    } finally {
+      client.close();
     }
   }
 

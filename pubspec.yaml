@@ -37,6 +37,7 @@ dependencies:
   
   # Hardware
   system_info2: ^4.0.0
+  excel2003: ^1.0.0
 
 dev_dependencies:
   flutter_test:

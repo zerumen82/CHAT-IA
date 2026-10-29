@@ -1,17 +1,22 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:excel2003/excel2003.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:xml/xml.dart';
 
 import '../models/document_attachment.dart';
+import '../config/document_config.dart';
+import '../config/spreadsheet_config.dart';
+import '../models/spreadsheet_data.dart';
 
-/// Extrae el texto de documentos (PDF, XLSX, CSV y texto plano) para
+/// Extrae el texto de documentos (PDF, XLSX, XLS, CSV y texto plano) para
 /// enviarlo como contexto al modelo local.
 ///
 /// Los límites son deliberadamente conservadores: el contexto de Ollama
@@ -20,12 +25,23 @@ import '../models/document_attachment.dart';
 class DocumentService {
   DocumentService._();
 
-  static const int maxFileBytes = 25 * 1024 * 1024;
-  static const int maxCharsPerDocument = 8000;
-  static const int maxTotalChars = 16000;
-  static const int maxHistoryChars = 4000;
-  static const int maxRowsPerSheet = 1000;
-  static const int maxColumnsPerRow = 50;
+  static const int maxFileBytes = DocumentConfig.maxFileBytes;
+
+  // Presupuesto de texto para 16.384 tokens de contexto (`num_ctx`). El texto
+  // de una hoja de cálculo gasta más tokens por carácter que la prosa, así que
+  // se deja holgura para el historial y la respuesta.
+  static const int maxCharsPerDocument = DocumentConfig.previewChars;
+  static const int maxTotalChars = 24000;
+  static const int maxHistoryChars = 8000;
+
+  /// Texto mínimo que merece la pena enviar de un documento, para que las
+  /// cabeceras de los demás no lo dejen en una línea inservible.
+  static const int minCharsPerDocument = 200;
+
+  /// Extracto mínimo cuando el presupuesto es menor que ese mínimo.
+  static const int _minExcerptChars = DocumentConfig.minExcerptChars;
+  static const int maxRowsPerSheet = DocumentConfig.maxRowsPerSheet;
+  static const int maxColumnsPerRow = DocumentConfig.maxColumnsPerRow;
 
   static const Set<String> imageExtensions = {
     'png',
@@ -40,6 +56,7 @@ class DocumentService {
     'pdf',
     'xlsx',
     'xlsm',
+    'xls',
     'csv',
     'tsv',
     'docx',
@@ -77,7 +94,7 @@ class DocumentService {
   static DocumentKind kindOf(String path) {
     return switch (extensionOf(path)) {
       'pdf' => DocumentKind.pdf,
-      'xlsx' || 'xlsm' || 'csv' || 'tsv' => DocumentKind.spreadsheet,
+      'xlsx' || 'xlsm' || 'xls' || 'csv' || 'tsv' => DocumentKind.spreadsheet,
       'pptx' => DocumentKind.presentation,
       _ => DocumentKind.text,
     };
@@ -88,6 +105,228 @@ class DocumentService {
   /// Nunca lanza: los fallos se devuelven en [DocumentAttachment.error] para
   /// que la UI pueda mostrarlos junto al archivo.
   static Future<DocumentAttachment> extract(
+    String path, {
+    String? displayName,
+  }) =>
+      Isolate.run(() => _extractInWorker(path, displayName: displayName));
+
+  /// Lectura completa y estructurada para cálculos, independiente del contexto.
+  /// Si una región no se puede leer o excede límites, rechaza todo el libro.
+  static Future<SpreadsheetData> readSpreadsheet(String path,
+          {String csvDelimiter = ','}) =>
+      Isolate.run(() => _readSpreadsheetInWorker(path, csvDelimiter));
+
+  static Future<SpreadsheetData> _readSpreadsheetInWorker(
+      String path, String csvDelimiter) async {
+    final file = File(path);
+    final size = await file.length();
+    if (size > DocumentConfig.maxFileBytes) {
+      throw const FormatException(
+          'El archivo supera el límite de lectura local.');
+    }
+    final bytes = await file.readAsBytes();
+    if (bytes.length > DocumentConfig.maxFileBytes) {
+      throw const FormatException(
+          'El archivo cambió de tamaño y supera el límite.');
+    }
+    final extension = extensionOf(path);
+    final sheets = <SpreadsheetSheet>[];
+    final warnings = <String>[];
+    var totalCells = 0;
+    void checkCellCount(int count) {
+      totalCells += count;
+      if (totalCells > SpreadsheetConfig.maxCells) {
+        throw const FormatException(
+            'Demasiadas celdas: no se calcularán totales sobre un libro incompleto.');
+      }
+    }
+
+    if (extension == 'csv' || extension == 'tsv') {
+      if (!{',', ';', '\t'}.contains(csvDelimiter)) {
+        throw const FormatException('Separador de tabla no admitido.');
+      }
+      final rows = _splitDelimitedRows(
+          _decodeText(bytes), extension == 'tsv' ? '\t' : csvDelimiter,
+          bounded: true);
+      final structured = <SpreadsheetRow>[];
+      for (var i = 0; i < rows.length; i++) {
+        checkCellCount(rows[i].length);
+        if (rows[i].every((c) => c.trim().isEmpty)) {
+          continue;
+        }
+        structured.add(SpreadsheetRow(i + 1, {
+          for (var column = 0; column < rows[i].length; column++)
+            column: SpreadsheetCell(rows[i][column]),
+        }));
+      }
+      sheets.add(SpreadsheetSheet('Tabla', structured));
+    } else if (extension == 'xlsx' ||
+        extension == 'xlsm' ||
+        (extension == 'xls' && _looksLikeZip(bytes))) {
+      final entries = _zipEntries(bytes);
+      final workbookXml = _zipText(entries, 'xl/workbook.xml');
+      if (workbookXml == null) {
+        throw const FormatException('Libro XLSX inválido.');
+      }
+      final workbook = XmlDocument.parse(workbookXml);
+      final relations =
+          _parseRelationships(_zipText(entries, 'xl/_rels/workbook.xml.rels'));
+      final shared =
+          _parseSharedStrings(_zipText(entries, 'xl/sharedStrings.xml'));
+      final dates = _parseDateStyles(_zipText(entries, 'xl/styles.xml'));
+      final elements = workbook.findAllElements('sheet').toList();
+      if (elements.length > SpreadsheetConfig.maxSheets) {
+        throw const FormatException('El libro supera el límite de hojas.');
+      }
+      for (final sheet in elements) {
+        final name = sheet.getAttribute('name') ?? 'Hoja';
+        final relation = _attributeValue(sheet, 'id', prefix: 'r');
+        final sheetPath = _resolveSheetPath(relations[relation], entries.keys);
+        final xml = sheetPath == null ? null : _zipText(entries, sheetPath);
+        if (xml == null) {
+          throw FormatException('No se pudo leer la hoja «$name».');
+        }
+        final document = XmlDocument.parse(xml);
+        final formulaRanges =
+            <({int firstRow, int lastRow, int firstColumn, int lastColumn})>[];
+        for (final formula in document.findAllElements('f')) {
+          final reference = formula.getAttribute('ref');
+          if (reference == null) {
+            continue;
+          }
+          if (formulaRanges.length >= SpreadsheetConfig.maxFormulaRanges) {
+            throw const FormatException(
+                'Demasiados rangos de fórmulas para una lectura completa segura.');
+          }
+          final match = RegExp(
+                  r'^\$?([A-Z]{1,3})\$?([1-9][0-9]{0,6})(?::\$?([A-Z]{1,3})\$?([1-9][0-9]{0,6}))?$')
+              .firstMatch(reference.toUpperCase());
+          if (match == null) {
+            throw const FormatException(
+                'Rango de fórmula inválido; no se suman posibles valores cacheados.');
+          }
+          final firstColumn = _columnIndex(match.group(1));
+          final lastColumn = _columnIndex(match.group(3) ?? match.group(1));
+          final firstRow = int.tryParse(match.group(2)!);
+          final lastRow = int.tryParse(match.group(4) ?? match.group(2)!);
+          if (firstColumn == null ||
+              lastColumn == null ||
+              firstRow == null ||
+              lastRow == null ||
+              lastColumn < firstColumn ||
+              lastRow < firstRow ||
+              lastRow > SpreadsheetConfig.excelMaxRows ||
+              lastColumn >= DocumentConfig.maxColumnsPerRow ||
+              lastRow - firstRow + 1 > DocumentConfig.maxRowsPerSheet) {
+            throw const FormatException(
+                'Un rango de fórmula supera los límites de lectura segura.');
+          }
+          formulaRanges.add((
+            firstRow: firstRow,
+            lastRow: lastRow,
+            firstColumn: firstColumn,
+            lastColumn: lastColumn
+          ));
+        }
+        final rows = <SpreadsheetRow>[];
+        final seenRows = <int>{};
+        for (final row in document.findAllElements('row')) {
+          if (seenRows.length >= DocumentConfig.maxRowsPerSheet) {
+            throw FormatException(
+                '«$name» supera el límite de filas; no se recorta para calcular.');
+          }
+          final rowReference = row.getAttribute('r');
+          final rowNumber = rowReference == null
+              ? seenRows.length + 1
+              : int.tryParse(rowReference);
+          if (rowNumber == null ||
+              rowNumber < 1 ||
+              rowNumber > SpreadsheetConfig.excelMaxRows ||
+              !seenRows.add(rowNumber)) {
+            throw FormatException('Coordenadas de fila inválidas en «$name».');
+          }
+          final cells = <int, SpreadsheetCell>{};
+          var nextColumn = 0;
+          for (final cell in row.findElements('c')) {
+            final reference = cell.getAttribute('r');
+            if (reference != null) {
+              final coordinate = RegExp(r'^([A-Z]{1,3})([1-9][0-9]{0,6})$')
+                  .firstMatch(reference);
+              if (coordinate == null ||
+                  int.tryParse(coordinate.group(2)!) != rowNumber) {
+                throw FormatException(
+                    'Coordenadas de celda inválidas en «$name».');
+              }
+            }
+            final column = _columnIndex(reference) ?? nextColumn;
+            nextColumn = column + 1;
+            if (column >= DocumentConfig.maxColumnsPerRow ||
+                cells.containsKey(column)) {
+              throw FormatException(
+                  'Columnas fuera del límite o duplicadas en «$name».');
+            }
+            checkCellCount(1);
+            final type = cell.getAttribute('t');
+            final style = int.tryParse(cell.getAttribute('s') ?? '');
+            final formula = cell.findElements('f').isNotEmpty ||
+                formulaRanges.any((range) =>
+                    rowNumber >= range.firstRow &&
+                    rowNumber <= range.lastRow &&
+                    column >= range.firstColumn &&
+                    column <= range.lastColumn);
+            final kind = formula
+                ? SpreadsheetCellKind.formula
+                : type == 'e'
+                    ? SpreadsheetCellKind.error
+                    : type == 'b'
+                        ? SpreadsheetCellKind.boolean
+                        : type == 'd' ||
+                                ((type == null || type == 'n') &&
+                                    dates.contains(style))
+                            ? SpreadsheetCellKind.date
+                            : type == null || type == 'n'
+                                ? SpreadsheetCellKind.number
+                                : SpreadsheetCellKind.text;
+            if (type == 's') {
+              final raw = cell.findElements('v').firstOrNull?.innerText;
+              final index = int.tryParse(raw ?? '');
+              if (index == null || index < 0 || index >= shared.length) {
+                throw FormatException(
+                    'Índice de texto inválido en «$name», fila $rowNumber.');
+              }
+            }
+            final value = _cellValue(cell, shared, dates);
+            cells[column] = SpreadsheetCell(
+                formula ? '(fórmula no evaluada)' : value, kind);
+          }
+          if (cells.values.any((c) => c.text.trim().isNotEmpty)) {
+            rows.add(SpreadsheetRow(rowNumber, cells));
+          }
+        }
+        sheets.add(SpreadsheetSheet(name, rows));
+      }
+    } else if (extension == 'xls') {
+      // excel2003 mezcla resultados cacheados de fórmulas con números normales.
+      // No es posible distinguirlos con su API, así que nunca sumamos BIFF8.
+      throw const FormatException(
+          'Para calcular, guarda el XLS antiguo como XLSX o CSV. '
+          'El lector XLS no distingue las fórmulas de sus valores guardados. '
+          'Puedes seguir adjuntando XLS al chat para consultar su texto.');
+    } else {
+      throw const FormatException('Selecciona XLSX, XLSM, XLS, CSV o TSV.');
+    }
+    if (sheets.map((s) => s.name).toSet().length != sheets.length) {
+      throw const FormatException(
+          'El libro tiene nombres de hojas duplicados.');
+    }
+    if (!sheets.any((s) => s.rows.isNotEmpty)) {
+      throw const FormatException('El archivo no contiene filas de datos.');
+    }
+    return SpreadsheetData(path.split(RegExp(r'[/\\]')).last, size, sheets,
+        warnings: warnings);
+  }
+
+  static Future<DocumentAttachment> _extractInWorker(
     String path, {
     String? displayName,
   }) async {
@@ -121,14 +360,37 @@ class DocumentService {
       final extension = extensionOf(name);
 
       String text;
+      String? completeText;
+      // Caracteres del documento completo, antes de repartir el presupuesto
+      // entre sus hojas.
+      int? fullChars;
       switch (extension) {
         case 'pdf':
           text = _extractPdf(bytes);
           break;
         case 'xlsx':
         case 'xlsm':
-          text = _extractXlsx(bytes);
-          break;
+          {
+            final sheets = _readXlsxSheets(bytes);
+            text = _renderSheetTexts(sheets, maxCharsPerDocument);
+            completeText =
+                _renderSheetTexts(sheets, DocumentConfig.maxExtractedChars);
+            fullChars = _sheetChars(sheets);
+            break;
+          }
+        case 'xls':
+          {
+            // Muchos "Excel" con extensión .xls son en realidad .xlsx
+            // renombrados: se leen con el mismo lector que los .xlsx.
+            final sheets = _looksLikeZip(bytes)
+                ? _readXlsxSheets(bytes)
+                : _readXlsSheets(bytes);
+            text = _renderSheetTexts(sheets, maxCharsPerDocument);
+            completeText =
+                _renderSheetTexts(sheets, DocumentConfig.maxExtractedChars);
+            fullChars = _sheetChars(sheets);
+            break;
+          }
         case 'docx':
           text = _extractDocx(bytes);
           break;
@@ -167,16 +429,26 @@ class DocumentService {
         );
       }
 
-      final originalChars = text.length;
-      final truncated = originalChars > maxCharsPerDocument;
+      final fullText = _normalize(completeText ?? text);
+      final originalChars =
+          math.max(fullChars ?? fullText.length, fullText.length);
+      final oversized = text.length > maxCharsPerDocument;
       return DocumentAttachment(
         path: path,
         name: name,
         kind: kind,
         sizeBytes: sizeBytes,
-        text: truncated ? truncateAtLineBreak(text, maxCharsPerDocument) : text,
+        text: oversized ? truncateAtLineBreak(text, maxCharsPerDocument) : text,
         originalChars: originalChars,
-        truncated: truncated,
+        truncated: oversized || originalChars > text.length,
+        extractedText: fullText.length > DocumentConfig.maxExtractedChars
+            ? truncateAtLineBreak(fullText, DocumentConfig.maxExtractedChars)
+            : fullText,
+        extractionTruncated:
+            fullText.length > DocumentConfig.maxExtractedChars ||
+                fullText.contains('[Hoja recortada:') ||
+                fullText.contains('[Tabla recortada:') ||
+                fullText.contains('[Columnas omitidas:'),
       );
     } catch (error) {
       return DocumentAttachment(
@@ -216,68 +488,148 @@ class DocumentService {
     return '${text.substring(0, cut).trimRight()}$marker';
   }
 
-  /// Caracteres del presupuesto de contexto que ocuparán [documents].
-  ///
-  /// Simula el mismo recorte que [buildAttachmentContext] sin construir el
-  /// bloque completo, para que la UI pueda avisar antes de enviar.
+  /// Longitud exacta del bloque que producirá [buildAttachmentContext].
   static int contextCharsFor(
     List<DocumentAttachment> documents, {
     int maxChars = maxTotalChars,
+  }) =>
+      buildAttachmentContext(documents, maxChars: maxChars).length;
+
+  /// Incluye tanto el recorte previo como el realizado para esta petición.
+  static bool isContextTruncated(
+    List<DocumentAttachment> documents, {
+    int maxChars = maxTotalChars,
   }) {
-    var remaining = maxChars;
-    for (final document in documents.where((document) => document.isReady)) {
-      if (remaining <= 0) break;
-      final usable = truncateAtLineBreak(document.text!, remaining);
-      remaining -= usable.length;
+    final ready = documents.where((document) => document.isReady).toList();
+    if (ready.any(
+        (document) => document.truncated || document.extractionTruncated)) {
+      return true;
     }
-    return maxChars - remaining;
+    return _documentSlices(ready, maxChars).any((slice) =>
+        slice.text == null || slice.text!.length < slice.document.charCount);
   }
 
-  /// Construye el bloque de contexto que se añade al mensaje del usuario.
+  /// Cabeceras, avisos y fragmentos comparten el mismo presupuesto final.
   static String buildAttachmentContext(
     List<DocumentAttachment> documents, {
     int maxChars = maxTotalChars,
   }) {
     final ready = documents.where((document) => document.isReady).toList();
-    if (ready.isEmpty) {
+    if (ready.isEmpty || maxChars <= 0) {
       return '';
     }
+    final slices = _documentSlices(ready, maxChars);
+    final included = slices.where((slice) => slice.text != null).toList();
+    if (included.isEmpty) {
+      return '';
+    }
+    final buffer = StringBuffer('${DocumentConfig.contextPreamble}\n');
+    for (var index = 0; index < included.length; index++) {
+      final slice = included[index];
+      buffer
+          .write(_renderDocument(index + 1, slice.document.name, slice.text!));
+    }
+    final omitted = ready.length - included.length;
+    if (omitted > 0) {
+      buffer.write(_omissionMarker(omitted));
+    }
+    return buffer.toString().trimRight();
+  }
 
-    final buffer = StringBuffer();
-    buffer.writeln(
-      'DOCUMENTOS ADJUNTOS (usa su contenido para responder; si la respuesta '
-      'no está en ellos, indícalo):',
+  static String _renderDocument(int position, String name, String text) =>
+      '\n--- Documento $position: $name ---\n$text\n--- Fin de $name ---\n';
+
+  static String _omissionMarker(int count) =>
+      '[$count documento(s) omitido(s) por límite de contexto]\n';
+
+  static int _blockOverhead(int position, String name) =>
+      _renderDocument(position, name, '').length;
+
+  static List<_DocumentSlice> _documentSlices(
+    List<DocumentAttachment> ready,
+    int maxChars,
+  ) {
+    if (ready.isEmpty) {
+      return [];
+    }
+    final available = maxChars - DocumentConfig.contextPreamble.length - 1;
+    var included = ready.length;
+    // Se reserva también el aviso de omisión antes de repartir los extractos.
+    while (included > 0) {
+      final overhead = List.generate(
+              included, (index) => _blockOverhead(index + 1, ready[index].name))
+          .fold(0, (sum, length) => sum + length);
+      final notice = included < ready.length
+          ? _omissionMarker(ready.length - included).length
+          : 0;
+      final minimum = ready.take(included).fold(
+          0,
+          (sum, document) =>
+              sum + math.min(_minExcerptChars, document.charCount));
+      if (overhead + notice + minimum <= available) {
+        break;
+      }
+      included--;
+    }
+    if (included == 0) {
+      return [for (final document in ready) _DocumentSlice(document, null)];
+    }
+    final overheads = [
+      for (var index = 0; index < included; index++)
+        _blockOverhead(index + 1, ready[index].name)
+    ];
+    final notice = included < ready.length
+        ? _omissionMarker(ready.length - included).length
+        : 0;
+    final grants = _shareBudget(
+      [for (final document in ready.take(included)) document.charCount],
+      available -
+          overheads.fold<int>(0, (sum, length) => sum + length) -
+          notice,
     );
+    return [
+      for (var index = 0; index < included; index++)
+        _DocumentSlice(ready[index],
+            truncateAtLineBreak(ready[index].text!, grants[index])),
+      for (final document in ready.skip(included))
+        _DocumentSlice(document, null),
+    ];
+  }
 
-    var remaining = maxChars;
-    var included = 0;
-    var omitted = 0;
+  /// Reparte [total] entre las [needs] indicadas: primero a partes iguales y
+  /// después el sobrante de las que ya estaban saciadas.
+  static List<int> _shareBudget(List<int> needs, int total) {
+    final grants = List<int>.filled(needs.length, 0);
+    if (needs.isEmpty || total <= 0) {
+      return grants;
+    }
 
-    for (final document in ready) {
-      if (remaining <= 0) {
-        omitted++;
-        continue;
+    var remaining = total;
+    var pending = [
+      for (var index = 0; index < needs.length; index++)
+        if (needs[index] > 0) index,
+    ];
+
+    while (remaining > 0 && pending.isNotEmpty) {
+      final share = remaining ~/ pending.length;
+      if (share <= 0) {
+        break;
       }
 
-      final text = document.text!;
-      final usable = truncateAtLineBreak(text, remaining);
-      remaining -= usable.length;
-      included++;
-
-      buffer.writeln();
-      buffer.writeln('--- Documento $included: ${document.name} ---');
-      buffer.write(usable);
-      buffer.writeln();
-      buffer.writeln('--- Fin de ${document.name} ---');
+      final next = <int>[];
+      for (final index in pending) {
+        final missing = needs[index] - grants[index];
+        final grant = math.min(share, missing);
+        grants[index] += grant;
+        remaining -= grant;
+        if (grants[index] < needs[index]) {
+          next.add(index);
+        }
+      }
+      pending = next;
     }
 
-    if (omitted > 0) {
-      buffer.writeln(
-        '[$omitted documento(s) omitido(s) por límite de contexto]',
-      );
-    }
-
-    return buffer.toString().trim();
+    return grants;
   }
 
   // ---------------------------------------------------------------------------
@@ -287,7 +639,17 @@ class DocumentService {
   static String _extractPdf(Uint8List bytes) {
     final document = PdfDocument(inputBytes: bytes);
     try {
-      return PdfTextExtractor(document).extractText();
+      final extractor = PdfTextExtractor(document);
+      final buffer = StringBuffer();
+      for (var page = 0; page < document.pages.count; page++) {
+        final text =
+            extractor.extractText(startPageIndex: page, endPageIndex: page);
+        if (text.trim().isNotEmpty) {
+          buffer.writeln('Página ${page + 1}:');
+          buffer.writeln(text);
+        }
+      }
+      return buffer.toString();
     } finally {
       document.dispose();
     }
@@ -298,7 +660,7 @@ class DocumentService {
   // ---------------------------------------------------------------------------
 
   static Map<String, ArchiveFile> _zipEntries(Uint8List bytes) {
-    final archive = ZipDecoder().decodeBytes(bytes);
+    final archive = _decodeOfficeZip(bytes);
     final entries = <String, ArchiveFile>{};
     for (final file in archive.files) {
       if (file.isFile) {
@@ -306,6 +668,41 @@ class DocumentService {
       }
     }
     return entries;
+  }
+
+  /// Valida tamaños declarados antes de que el decodificador descomprima nada.
+  static Archive _decodeOfficeZip(Uint8List bytes) {
+    final directory = ZipDirectory()..read(InputMemoryStream(bytes));
+    if (directory.fileHeaders.length > DocumentConfig.maxZipEntries) {
+      throw const FormatException(
+          'El documento contiene demasiadas entradas ZIP.');
+    }
+    var expanded = 0;
+    for (final header in directory.fileHeaders) {
+      expanded += header.uncompressedSize;
+      if (header.uncompressedSize > DocumentConfig.maxZipEntryBytes ||
+          expanded > DocumentConfig.maxExpandedZipBytes) {
+        throw const FormatException(
+            'El documento supera el límite de expansión ZIP.');
+      }
+      final mode = header.externalFileAttributes >> 16;
+      if ((mode & 0xf000) == 0xa000) {
+        throw const FormatException(
+            'No se permiten enlaces simbólicos en documentos Office.');
+      }
+    }
+    final archive = ZipDecoder().decodeBytes(bytes);
+    final bounded = Archive();
+    for (final entry in archive.files.where((entry) => entry.isFile)) {
+      final output = _BoundedZipOutput(entry.size);
+      entry.decompress(output);
+      if (output.length != entry.size) {
+        throw const FormatException(
+            'El tamaño descomprimido no coincide con el ZIP.');
+      }
+      bounded.add(ArchiveFile(entry.name, output.length, output.getBytes()));
+    }
+    return bounded;
   }
 
   static String? _zipText(Map<String, ArchiveFile> entries, String path) {
@@ -595,6 +992,10 @@ class DocumentService {
           .toList();
       if (cells.every((cell) => cell.isEmpty)) continue;
       buffer.writeln('Fila ${index + 1}: ${cells.join(' | ')}');
+      if (rows[index].length > maxColumnsPerRow) {
+        buffer.writeln(
+            '[Columnas omitidas: ${rows[index].length - maxColumnsPerRow} en la fila ${index + 1}]');
+      }
     }
     return buffer.toString();
   }
@@ -602,8 +1003,9 @@ class DocumentService {
   /// Divide CSV/TSV respetando las comillas dobles y los saltos entre comillas.
   static List<List<String>> _splitDelimitedRows(
     String text,
-    String delimiter,
-  ) {
+    String delimiter, {
+    bool bounded = false,
+  }) {
     final rows = <List<String>>[];
     var row = <String>[];
     final cell = StringBuffer();
@@ -611,6 +1013,12 @@ class DocumentService {
     final separator = delimiter.codeUnitAt(0);
 
     void endRow() {
+      if (bounded &&
+          (rows.length >= DocumentConfig.maxRowsPerSheet ||
+              row.length >= DocumentConfig.maxColumnsPerRow)) {
+        throw const FormatException(
+            'La tabla supera los límites de filas o columnas; no se calculará un total parcial.');
+      }
       row.add(cell.toString());
       rows.add(row);
       row = <String>[];
@@ -638,6 +1046,9 @@ class DocumentService {
       if (unit == 34) {
         inQuotes = true;
       } else if (unit == separator) {
+        if (bounded && row.length >= DocumentConfig.maxColumnsPerRow - 1) {
+          throw const FormatException('La tabla supera el límite de columnas.');
+        }
         row.add(cell.toString());
         cell.clear();
       } else if (unit == 10) {
@@ -647,6 +1058,9 @@ class DocumentService {
       }
     }
 
+    if (bounded && inQuotes) {
+      throw const FormatException('La tabla tiene comillas sin cerrar.');
+    }
     if (cell.isNotEmpty || row.isNotEmpty) {
       endRow();
     }
@@ -654,11 +1068,12 @@ class DocumentService {
   }
 
   // ---------------------------------------------------------------------------
-  // XLSX (lectura directa del ZIP + XML de Office Open XML)
+  // Hojas de cálculo (XLSX por ZIP + XML, XLS por BIFF8)
   // ---------------------------------------------------------------------------
 
-  static String _extractXlsx(Uint8List bytes) {
-    final archive = ZipDecoder().decodeBytes(bytes);
+  /// Texto de una hoja ya formateado en filas (`Fila 2: Ana | 12`).
+  static List<_SheetText> _readXlsxSheets(Uint8List bytes) {
+    final archive = _decodeOfficeZip(bytes);
     final entries = <String, ArchiveFile>{};
     for (final file in archive.files) {
       if (file.isFile) {
@@ -691,12 +1106,8 @@ class DocumentService {
         _parseRelationships(read('xl/_rels/workbook.xml.rels'));
     final workbook = XmlDocument.parse(workbookXml);
 
-    final buffer = StringBuffer();
+    final sheets = <_SheetText>[];
     for (final sheet in workbook.findAllElements('sheet')) {
-      if (buffer.length > maxCharsPerDocument * 2) {
-        break;
-      }
-
       final sheetName = sheet.getAttribute('name') ?? 'Hoja';
       final relationId = _attributeValue(sheet, 'id', prefix: 'r');
       final target = relationId == null ? null : relationships[relationId];
@@ -710,18 +1121,168 @@ class DocumentService {
       if (rows.isEmpty) {
         continue;
       }
+      sheets.add(_SheetText(sheetName, rows));
+    }
 
+    return sheets;
+  }
+
+  /// Texto de un libro .xls (Excel 97-2003, BIFF8).
+  static List<_SheetText> _readXlsSheets(Uint8List bytes) {
+    try {
+      final reader = XlsReader.fromBytes(bytes);
+      final sheets = <_SheetText>[];
+
+      for (var index = 0; index < reader.sheetCount; index++) {
+        final sheet = reader.sheet(index);
+        final rowsByIndex = <int, Map<int, String>>{};
+        for (final cell in sheet.cells) {
+          final value = _xlsCellText(cell.value);
+          if (value.isEmpty) {
+            continue;
+          }
+          rowsByIndex.putIfAbsent(cell.row, () => {})[cell.col] = value;
+        }
+        if (rowsByIndex.isEmpty) {
+          continue;
+        }
+
+        final rowNumbers = rowsByIndex.keys.toList()..sort();
+        final rows = <String>[];
+        for (final rowNumber in rowNumbers) {
+          if (rows.length >= maxRowsPerSheet) {
+            rows.add('[Hoja recortada: máximo de $maxRowsPerSheet filas]');
+            break;
+          }
+
+          final cells = rowsByIndex[rowNumber]!;
+          final maxColumn = math.min(
+            cells.keys.reduce(math.max),
+            maxColumnsPerRow - 1,
+          );
+          final values = List<String>.generate(
+            maxColumn + 1,
+            (column) => cells[column] ?? '',
+          );
+          if (values.every((value) => value.isEmpty)) {
+            continue;
+          }
+          rows.add('Fila ${rowNumber + 1}: ${values.join(' | ')}');
+          if (cells.keys.any((column) => column >= maxColumnsPerRow)) {
+            rows.add(
+                '[Columnas omitidas: a partir de la columna ${maxColumnsPerRow + 1} en la fila ${rowNumber + 1}]');
+          }
+        }
+
+        if (rows.isNotEmpty) {
+          sheets.add(_SheetText(sheet.name, rows));
+        }
+      }
+
+      return sheets;
+    } on FormatException {
+      rethrow;
+    } catch (error) {
+      throw FormatException(
+        'El archivo no parece un libro de Excel 97-2003 válido ($error).',
+      );
+    }
+  }
+
+  /// Valor de una celda .xls como texto legible.
+  static String _xlsCellText(Object? value) {
+    if (value == null) {
+      return '';
+    }
+    if (value is DateTime) {
+      final day = value.day.toString().padLeft(2, '0');
+      final month = value.month.toString().padLeft(2, '0');
+      final date = '$day/$month/${value.year}';
+      if (value.hour == 0 && value.minute == 0 && value.second == 0) {
+        return date;
+      }
+      final hour = value.hour.toString().padLeft(2, '0');
+      final minute = value.minute.toString().padLeft(2, '0');
+      return '$date $hour:$minute';
+    }
+    if (value is double) {
+      if (value.isFinite && value == value.roundToDouble()) {
+        return value.toInt().toString();
+      }
+      return value.toString();
+    }
+    if (value is bool) {
+      return value ? 'verdadero' : 'falso';
+    }
+    return value.toString().trim();
+  }
+
+  /// Caracteres que ocupa el texto completo de todas las hojas.
+  static int _sheetChars(List<_SheetText> sheets) {
+    var total = 0;
+    for (final sheet in sheets) {
+      total += sheet.chars;
+    }
+    return total;
+  }
+
+  /// Vuelca las hojas repartiendo [maxChars] entre todas, de modo que ninguna
+  /// desaparezca: cada una aporta su cabecera, sus primeras filas y una marca
+  /// con cuántas quedaron fuera.
+  static String _renderSheetTexts(List<_SheetText> sheets, int maxChars) {
+    if (sheets.isEmpty) {
+      return '';
+    }
+
+    final headerLengths = [
+      for (final sheet in sheets) 'Hoja "${sheet.name}":'.length + 2,
+    ];
+    final grants = _shareBudget(
+      [
+        for (var index = 0; index < sheets.length; index++)
+          sheets[index].chars + headerLengths[index],
+      ],
+      maxChars,
+    );
+
+    final buffer = StringBuffer();
+    for (var index = 0; index < sheets.length; index++) {
+      final sheet = sheets[index];
       if (buffer.isNotEmpty) {
         buffer.writeln();
       }
-      buffer.writeln('Hoja "$sheetName":');
-      for (final row in rows) {
+      buffer.writeln('Hoja "${sheet.name}":');
+
+      var available = grants[index] - headerLengths[index];
+      var written = 0;
+      for (final row in sheet.rows) {
+        if (available <= 0) {
+          break;
+        }
+        if (row.length + 1 > available) {
+          if (written == 0) {
+            buffer.writeln(truncateAtLineBreak(row, available));
+            written = 1;
+          }
+          break;
+        }
         buffer.writeln(row);
+        available -= row.length + 1;
+        written++;
+      }
+
+      if (written < sheet.rows.length) {
+        buffer.writeln(
+          '[Hoja recortada: se muestran $written de ${sheet.rows.length} filas]',
+        );
       }
     }
 
     return buffer.toString();
   }
+
+  static bool _looksLikeZip(Uint8List bytes) =>
+      bytes.length >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4B;
 
   static String? _resolveSheetPath(
     String? target,
@@ -897,6 +1458,10 @@ class DocumentService {
         (index) => cells[index] ?? '',
       );
       rows.add('Fila $rowIndex: ${values.join(' | ')}');
+      if (cells.keys.any((column) => column >= maxColumnsPerRow)) {
+        rows.add(
+            '[Columnas omitidas: a partir de la columna ${maxColumnsPerRow + 1} en la fila $rowIndex]');
+      }
     }
 
     return rows;
@@ -1000,5 +1565,70 @@ class DocumentService {
         .replaceAll(RegExp(r'\n[ ]+'), '\n')
         .replaceAll(RegExp(r'\n{3,}'), '\n\n')
         .trim();
+  }
+}
+
+/// Documento con el texto que finalmente ocupa el presupuesto de contexto.
+class _DocumentSlice {
+  final DocumentAttachment document;
+
+  /// Texto recortado que se envía, o `null` si el documento queda fuera.
+  final String? text;
+
+  const _DocumentSlice(this.document, this.text);
+}
+
+/// Hoja de cálculo ya convertida a filas de texto.
+class _SheetText {
+  final String name;
+  final List<String> rows;
+
+  const _SheetText(this.name, this.rows);
+
+  /// Caracteres del texto de la hoja, contando el salto de línea de cada fila.
+  int get chars {
+    var total = 0;
+    for (final row in rows) {
+      total += row.length + 1;
+    }
+    return total;
+  }
+}
+
+/// Impide que una cabecera ZIP falsificada eluda el límite al expandirse.
+class _BoundedZipOutput extends OutputMemoryStream {
+  final int limit;
+  _BoundedZipOutput(this.limit)
+      : super(size: math.min(limit, OutputMemoryStream.defaultBufferSize));
+
+  void _check(int additional) {
+    if (additional < 0 || length + additional > limit) {
+      throw const FormatException(
+          'El contenido ZIP excede el tamaño declarado.');
+    }
+  }
+
+  @override
+  void writeByte(int value) {
+    _check(1);
+    super.writeByte(value);
+  }
+
+  @override
+  void writeBytes(List<int> bytes, {int? length}) {
+    _check(length ?? bytes.length);
+    super.writeBytes(bytes, length: length);
+  }
+
+  @override
+  void writeStream(InputStream stream) {
+    _check(stream.length);
+    super.writeStream(stream);
+  }
+
+  @override
+  void writeBackReference(int distance, int count) {
+    _check(count);
+    super.writeBackReference(distance, count);
   }
 }

@@ -1,0 +1,235 @@
+00:00 +0: loading D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_context_test.dart
+00:00 +0: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: allows preparing a message while Ollama is offline
+00:00 +0: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: preserves conversation turns and streams partial responses
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:00 +1: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: allows preparing a message while Ollama is offline
+00:00 +1: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: sends image-only messages and keeps images in conversation context
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:00 +2: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: allows preparing a message while Ollama is offline
+00:00 +2: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: sends attached document text and widens the context window
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:00 +3: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: allows preparing a message while Ollama is offline
+00:00 +3: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: does not resend failed turns as conversation context
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:00 +4: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: allows preparing a message while Ollama is offline
+00:00 +4: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: regenerates the last answer without duplicating the question
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:00 +5: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: allows preparing a message while Ollama is offline
+00:00 +5: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: edits a user message and drops the later turns
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:00 +6: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: allows preparing a message while Ollama is offline
+00:00 +6: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: keeps separate conversations and restores their messages
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:00 +7: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: allows preparing a message while Ollama is offline
+00:00 +7: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: retries the last user question instead of the error text
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:00 +8: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: allows preparing a message while Ollama is offline
+00:00 +8: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: creates real files from streamed tool calls and persists their references
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:00 +9: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: allows preparing a message while Ollama is offline
+00:00 +9: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: keeps documents available beyond ten messages and after another attachment
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +10: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: allows preparing a message while Ollama is offline
+00:01 +10: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: persists explicit context profile and uses it with and without documents
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +11: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: allows preparing a message while Ollama is offline
+00:01 +11: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: tool validation failures are visible and do not claim a file was created
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +12: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_context_test.dart: refreshes context after model changes and ignores an older result
+00:01 +13: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_context_test.dart: refreshes context after model changes and ignores an older result
+00:01 +13: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: asks for storage only when a file tool actually needs it
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +14: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_context_test.dart: refreshes context after model changes and ignores an older result
+00:01 +14: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: clearing history also removes documentary sources and saved selections
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +15: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_context_test.dart: refreshes context after model changes and ignores an older result
+00:01 +15: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: an unavailable document folder does not prevent conversations loading
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +16: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_context_test.dart: refreshes context after model changes and ignores an older result
+00:01 +16: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: clearing locks sending and switching conversations until cleanup completes
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +17: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: keeps a rejected draft and does not clear edits during acceptance
+00:01 +18: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: keeps a rejected draft and does not clear edits during acceptance
+00:01 +18: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: preserves partial response and useful server error separately
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +19: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: keeps a rejected draft and does not clear edits during acceptance
+00:01 +19: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: EOF without done is interrupted instead of completed
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +20: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: keeps a rejected draft and does not clear edits during acceptance
+00:01 +20: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: records response limit and real generation metrics
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +21: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: keeps a rejected draft and does not clear edits during acceptance
+00:01 +21: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: stop closes transport and preserves partial answer before allowing send
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +22: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: keeps a rejected draft and does not clear edits during acceptance
+00:01 +22: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: rejects unsupported and unknown vision before accepting the draft
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +23: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: keeps a rejected draft and does not clear edits during acceptance
+00:01 +23: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: switches general/documentary context and excludes sources from history
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +24: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: keeps a rejected draft and does not clear edits during acceptance
+00:01 +25: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: switches general/documentary context and excludes sources from history
+00:01 +26: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_context_test.dart: refreshes context after history changes and ignores an older result
+00:01 +26: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: explicit general and disabled pending sources prevail at send
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +27: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_context_test.dart: refreshes context after history changes and ignores an older result
+00:01 +28: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_context_test.dart: refreshes context after history changes and ignores an older result
+00:01 +28: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: keeps saved history while exposing partial request history
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +29: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: switching and disposing cannot recreate an explicitly deleted draft
+00:01 +30: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: switching and disposing cannot recreate an explicitly deleted draft
+00:01 +30: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: Windows path aliases cannot reintroduce an excluded legacy source
+[ChatServiceOllama] 3 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: llama3:latest
+00:01 +31: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_service_ollama_test.dart: Windows path aliases cannot reintroduce an excluded legacy source
+00:02 +32: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: drop during initial restore cannot leave the editor disabled
+00:02 +33: D:/PROJECTS/LITGHCHAT/lightchat/test/chat_input_interaction_test.dart: keeps partial content readable alongside interruption and continuation
+00:02 +34: D:/PROJECTS/LITGHCHAT/lightchat/test/context_profile_service_test.dart: (setUpAll)
+00:02 +34: D:/PROJECTS/LITGHCHAT/lightchat/test/context_profile_service_test.dart: respects native 2k and 8k limits instead of applying 16k universally
+00:02 +35: D:/PROJECTS/LITGHCHAT/lightchat/test/context_profile_service_test.dart: (tearDownAll)
+00:02 +35: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage english <- Summarize the mission statement of the company
+00:02 +36: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage english <- Compare the values and tell me the difference
+00:02 +37: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage english <- What is the best way to learn Flutter?
+00:02 +38: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage english <- Hello, how are you?
+00:02 +39: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage english <- Read the table and answer
+00:02 +40: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage español <- hola, ¿cómo estás?
+00:02 +41: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage español <- Quiero un resumen del Excel
+00:02 +42: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage español <- Analiza el PDF y dime los totales
+00:02 +43: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage español <- Necesito los datos del mes pasado
+00:02 +44: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage français <- Bonjour, comment ça va ?
+00:02 +45: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage português <- Olá, como vai você?
+00:02 +46: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage deutsch <- Bitte hilf mir mit dieser Tabelle
+00:02 +47: D:/PROJECTS/LITGHCHAT/lightchat/test/context_service_test.dart: detectLanguage keeps Spanish for very short or empty input
+00:02 +48: D:/PROJECTS/LITGHCHAT/lightchat/test/conversation_service_test.dart: saves, reorders and restores conversations
+00:02 +49: D:/PROJECTS/LITGHCHAT/lightchat/test/conversation_service_test.dart: deletes the messages of a conversation
+00:02 +50: D:/PROJECTS/LITGHCHAT/lightchat/test/conversation_service_test.dart: ignores a corrupt index instead of throwing
+Error cargando conversaciones: FormatException: Unexpected character (at character 1)
+esto no es json
+^
+
+00:02 +51: D:/PROJECTS/LITGHCHAT/lightchat/test/conversation_service_test.dart: generates unique conversation ids
+00:03 +52: D:/PROJECTS/LITGHCHAT/lightchat/test/document_context_service_test.dart: retrieves referenced facts at the start, middle and end
+00:03 +53: D:/PROJECTS/LITGHCHAT/lightchat/test/document_context_service_test.dart: includes every source within a strict final budget
+00:03 +54: D:/PROJECTS/LITGHCHAT/lightchat/test/document_context_service_test.dart: distinguishes full coverage from a historical lost extraction
+00:03 +55: D:/PROJECTS/LITGHCHAT/lightchat/test/document_context_service_test.dart: queries preserved sources after restart without original path
+00:03 +56: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts plain text and normalizes line endings
+00:03 +57: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: truncates documents longer than the context budget
+00:03 +58: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: rejects formats that are not supported
+00:03 +59: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts paragraphs and table rows from DOCX
+00:03 +60: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts slide text from PPTX in slide order
+00:03 +61: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts visible text from HTML without scripts or styles
+00:03 +62: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts element text from XML and decodes entities
+00:03 +63: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: formats TSV rows like a spreadsheet
+00:03 +64: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: formats CSV rows and respects quoted separators
+00:03 +65: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts shared strings, inline strings and numbers from XLSX
+00:03 +66: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: converts Excel date serials to readable dates
+00:03 +67: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts selectable text from PDF
+00:03 +68: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts selectable text from PDF
+00:03 +69: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts selectable text from PDF
+00:03 +70: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts selectable text from PDF
+00:03 +71: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts selectable text from PDF
+00:03 +72: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts selectable text from PDF
+00:04 +73: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: extracts selectable text from PDF
+00:04 +74: D:/PROJECTS/LITGHCHAT/lightchat/test/document_store_service_test.dart: blocks moving a library with files under generated
+00:04 +75: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: reports how much of the context budget documents consume
+00:04 +76: D:/PROJECTS/LITGHCHAT/lightchat/test/document_store_service_test.dart: blocks moving a library with files under .lightchat-contexts
+00:04 +77: D:/PROJECTS/LITGHCHAT/lightchat/test/document_store_service_test.dart: blocks moving a library with files under .lightchat-contexts
+00:04 +78: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: reads a real Excel 97-2003 (.xls) workbook
+00:04 +79: D:/PROJECTS/LITGHCHAT/lightchat/test/document_store_service_test.dart: can change an empty library and reopen the same populated root
+00:04 +80: D:/PROJECTS/LITGHCHAT/lightchat/test/draft_service_test.dart: restores complete long draft without a document library
+00:04 +81: D:/PROJECTS/LITGHCHAT/lightchat/test/draft_service_test.dart: restores complete long draft without a document library
+00:04 +82: D:/PROJECTS/LITGHCHAT/lightchat/test/draft_service_test.dart: restores complete long draft without a document library
+00:04 +83: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: keeps every sheet of a large workbook within the budget
+00:04 +84: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: keeps every sheet of a large workbook within the budget
+00:04 +85: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: keeps every sheet of a large workbook within the budget
+00:04 +86: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: keeps every sheet of a large workbook within the budget
+00:04 +87: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: keeps every sheet of a large workbook within the budget
+00:04 +88: D:/PROJECTS/LITGHCHAT/lightchat/test/draft_service_test.dart: flush repeats when drafts change while persistence awaits
+00:04 +89: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: shares the context budget between several attached files
+00:04 +90: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: shares the context budget between several attached files
+00:04 +91: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: reports omitted columns during extraction
+00:04 +92: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: rejects declared ZIP expansion before decompression
+00:04 +93: D:/PROJECTS/LITGHCHAT/lightchat/test/document_service_test.dart: rejects compressed content larger than a falsified ZIP header
+00:04 +94: D:/PROJECTS/LITGHCHAT/lightchat/test/export_service_test.dart: exports UTF-8 text and preserves the original Markdown structure
+00:04 +95: D:/PROJECTS/LITGHCHAT/lightchat/test/export_service_test.dart: creates an editable OOXML Word with headings, lists, tables and code
+00:05 +96: D:/PROJECTS/LITGHCHAT/lightchat/test/export_service_test.dart: creates an editable OOXML Word with headings, lists, tables and code
+00:05 +97: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: export reports saved after the selected destination
+00:05 +98: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: export reports saved after the selected destination
+00:05 +99: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: export reports saved after the selected destination
+00:05 +100: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: export reports saved after the selected destination
+00:05 +101: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: export reports saved after the selected destination
+00:06 +102: D:/PROJECTS/LITGHCHAT/lightchat/test/export_service_test.dart: PDF is paginated and preserves Spanish Unicode through extraction
+00:06 +102 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/export_service_test.dart: PDF is paginated and preserves Spanish Unicode through extraction
+00:06 +103 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/export_service_test.dart: PDF is paginated and preserves Spanish Unicode through extraction
+00:06 +104 ~1: loading D:/PROJECTS/LITGHCHAT/lightchat/test/model_uncensored_test.dart
+00:06 +104 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: export reports write-error after the selected destination
+00:06 +105 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: export reports write-error after the selected destination
+00:06 +106 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: export reports write-error after the selected destination
+00:06 +107 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: export reports write-error after the selected destination
+00:06 +108 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: export reports write-error after the selected destination
+00:06 +109 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: generated file cards show real names and disable saving while busy
+00:06 +110 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: export action offers all four formats and can be cancelled
+00:06 +111 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: context dialog displays the exact sent selection instead of stored document text
+00:07 +112 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/file_widgets_test.dart: context dialog displays the exact sent selection instead of stored document text
+00:07 +113 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_catalog_test.dart: loads Ollama library pages with Llama and uncensored variants
+00:07 +114 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/model_uncensored_test.dart: does not flag regular models as uncensored
+00:07 +115 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_catalog_test.dart: search and category filters return only matching visible models
+00:07 +116 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_catalog_test.dart: keeps the last catalog when a later page fails
+00:08 +117 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_chat_transport_test.dart: (setUpAll)
+00:08 +117 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_chat_transport_test.dart: cancels HTTP while still awaiting response headers
+00:08 +118 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/spreadsheet_analysis_test.dart: CSV real: grupos, negativos, decimales exactos y exclusiones visibles
+00:08 +119 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_chat_transport_test.dart: connection timeout includes the wait for first headers
+00:08 +120 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_chat_transport_test.dart: connection timeout includes the wait for first headers
+00:08 +121 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_chat_transport_test.dart: connection timeout includes the wait for first headers
+00:08 +122 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/spreadsheet_analysis_test.dart: bloquea tabla que supera filas o columnas, sin devolver una selección parcial
+00:08 +123 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/spreadsheet_analysis_test.dart: bloquea tabla que supera filas o columnas, sin devolver una selección parcial
+00:08 +124 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_chat_transport_test.dart: inactivity timeout follows last data event
+00:08 +125 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/spreadsheet_analysis_test.dart: XLSX real multihoja, fórmula cacheada excluida y celda nativa independiente de locale
+00:08 +126 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_chat_transport_test.dart: thinking events reset inactivity even with no visible answer tokens
+00:08 +127 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_chat_transport_test.dart: thinking events reset inactivity even with no visible answer tokens
+00:09 +128 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_chat_transport_test.dart: thinking events reset inactivity even with no visible answer tokens
+00:09 +129 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/ollama_chat_transport_test.dart: (tearDownAll)
+00:09 +129 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/widget_test.dart: (setUpAll)
+00:09 +129 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/widget_test.dart: renders the LightChat conversation screen
+[ChatServiceOllama] 0 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: 
+00:10 +130 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/widget_test.dart: shows the retry action in error message bubbles
+00:11 +131 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/widget_test.dart: offers a free GPU action in the chat menu
+[ChatServiceOllama] 0 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: 
+00:11 +132 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/widget_test.dart: shows the conversation sidebar only on wide windows
+[ChatServiceOllama] 0 modelos disponibles
+[ChatServiceOllama] Modelo seleccionado: 
+00:12 +133 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/widget_test.dart: renders assistant markdown with copyable code blocks
+00:12 +134 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/widget_test.dart: offers regenerate on the last answer and edit on user messages
+00:12 +135 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/widget_test.dart: extracts an attached file and shows its text and context meter
+00:12 +136 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/widget_test.dart: shows the document chip text in the message bubble
+00:13 +137 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/widget_test.dart: sends the message when Enter is pressed
+00:13 +138 ~1: D:/PROJECTS/LITGHCHAT/lightchat/test/widget_test.dart: (tearDownAll)
+00:13 +138 ~1: All tests passed!

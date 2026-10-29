@@ -1,3 +1,5 @@
+import '../config/document_config.dart';
+
 /// Tipo de documento admitido como adjunto.
 enum DocumentKind {
   pdf,
@@ -28,6 +30,15 @@ class DocumentAttachment {
   /// True mientras se está extrayendo el texto.
   final bool isLoading;
 
+  /// Identificador del contenido conservado fuera del JSON de la conversación.
+  final String? storageId;
+
+  /// Extracción completa temporal/hidratada. Nunca se serializa en preferencias.
+  final String? extractedText;
+
+  /// Pérdida real durante extracción, distinta de la vista previa recortada.
+  final bool extractionTruncated;
+
   const DocumentAttachment({
     required this.path,
     required this.name,
@@ -38,6 +49,9 @@ class DocumentAttachment {
     this.truncated = false,
     this.error,
     this.isLoading = false,
+    this.storageId,
+    this.extractedText,
+    this.extractionTruncated = false,
   });
 
   bool get isReady =>
@@ -66,6 +80,10 @@ class DocumentAttachment {
     String? error,
     bool? isLoading,
     bool clearError = false,
+    String? storageId,
+    String? extractedText,
+    bool? extractionTruncated,
+    bool clearExtractedText = false,
   }) {
     return DocumentAttachment(
       path: path ?? this.path,
@@ -77,6 +95,10 @@ class DocumentAttachment {
       truncated: truncated ?? this.truncated,
       error: clearError ? null : (error ?? this.error),
       isLoading: isLoading ?? this.isLoading,
+      storageId: storageId ?? this.storageId,
+      extractedText:
+          clearExtractedText ? null : extractedText ?? this.extractedText,
+      extractionTruncated: extractionTruncated ?? this.extractionTruncated,
     );
   }
 
@@ -86,10 +108,15 @@ class DocumentAttachment {
       'name': name,
       'kind': kind.name,
       'sizeBytes': sizeBytes,
-      'text': text,
+      'text': storageId != null &&
+              (text?.length ?? 0) > DocumentConfig.persistedPreviewChars
+          ? text!.substring(0, DocumentConfig.persistedPreviewChars)
+          : text,
       'originalChars': originalChars,
       'truncated': truncated,
       'error': error,
+      'storageId': storageId,
+      'extractionTruncated': extractionTruncated,
     };
   }
 
@@ -106,6 +133,9 @@ class DocumentAttachment {
       originalChars: json['originalChars'] as int? ?? 0,
       truncated: json['truncated'] as bool? ?? false,
       error: json['error'] as String?,
+      storageId: json['storageId'] as String?,
+      extractionTruncated: json['extractionTruncated'] as bool? ??
+          (json['storageId'] == null && (json['truncated'] as bool? ?? false)),
     );
   }
 

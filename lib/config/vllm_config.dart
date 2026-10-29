@@ -16,7 +16,11 @@ class OllamaConfig {
   ///
   /// Se usa siempre el mismo valor (también sin documentos) porque Ollama
   /// recarga el modelo cuando cambia `num_ctx`, lo que cuesta varios segundos.
-  static const int maxContextTokens = 8192;
+  ///
+  /// 16.384 tokens son lo que necesita el texto repartido de varios Excel
+  /// (ver `DocumentService.maxCharsPerDocument`); en la RTX 3060 Ti de 8 GB
+  /// añade ~0,9 GB de caché sobre un modelo de 7B Q4 y sigue cabiendo en VRAM.
+  static const int maxContextTokens = 16384;
 
   /// Alias histórico del contexto ampliado para documentos.
   static const int documentContextTokens = maxContextTokens;

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'screens/chat_screen.dart';
@@ -6,27 +7,18 @@ import 'services/chat_service_ollama.dart';
 import 'services/theme_service.dart';
 import 'services/ollama_service.dart';
 import 'services/model_catalog_service.dart';
+import 'services/draft_service.dart';
+import 'config/ui_config.dart';
 import 'package:window_manager/window_manager.dart';
 
-const _primarySeed = Color(0xFF5967D8);
-const _secondarySeed = Color(0xFF15A6A0);
+const _primarySeed = Color(0xFF3730A3);
+final _messengerKey = GlobalKey<ScaffoldMessengerState>();
 
 ThemeData _buildAppTheme(Brightness brightness) {
-  final baseScheme = ColorScheme.fromSeed(
+  final colorScheme = ColorScheme.fromSeed(
     seedColor: _primarySeed,
     brightness: brightness,
-    contrastLevel: 0.15,
-  );
-  final accentScheme = ColorScheme.fromSeed(
-    seedColor: _secondarySeed,
-    brightness: brightness,
-    contrastLevel: 0.15,
-  );
-  final colorScheme = baseScheme.copyWith(
-    secondary: accentScheme.primary,
-    onSecondary: accentScheme.onPrimary,
-    secondaryContainer: accentScheme.primaryContainer,
-    onSecondaryContainer: accentScheme.onPrimaryContainer,
+    contrastLevel: 0.1,
   );
   final textTheme = const TextTheme(
     displayLarge: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
@@ -120,15 +112,21 @@ void main() async {
 
 /// Libera la VRAM de Ollama antes de cerrar la ventana.
 ///
-/// `setPreventClose` evita que el proceso muera antes de terminar la petición
-/// de descarga del modelo, que es rápida y nunca bloquea el cierre más de 2 s.
+/// Guarda el borrador antes del cierre; si falla, mantiene la ventana abierta.
+/// La descarga de modelos conserva su plazo independiente de dos segundos.
 class _WindowCloseObserver with WindowListener {
   bool _closing = false;
 
   @override
   void onWindowClose() async {
-    if (_closing) return;
+    if (_closing) {
+      return;
+    }
     _closing = true;
+
+    if (!await _saveBeforeClose()) {
+      return;
+    }
 
     try {
       await OllamaService.instance
@@ -138,10 +136,29 @@ class _WindowCloseObserver with WindowListener {
       // Cerrar siempre, aunque Ollama no responda.
     }
 
+    // Puede haberse editado durante la petición de descarga del modelo.
+    if (!await _saveBeforeClose()) {
+      return;
+    }
     try {
       await windowManager.destroy();
     } catch (e) {
+      _closing = false;
       debugPrint('No se pudo cerrar la ventana: $e');
+    }
+  }
+
+  Future<bool> _saveBeforeClose() async {
+    try {
+      await DraftService.instance.flush().timeout(UiConfig.draftFlushTimeout);
+      return true;
+    } catch (error) {
+      debugPrint('No se pudo guardar el borrador al cerrar: $error');
+      _messengerKey.currentState?.showSnackBar(const SnackBar(
+          content: Text(
+              'No se pudo guardar el borrador. La ventana sigue abierta para conservarlo; revisa el almacenamiento e inténtalo de nuevo.')));
+      _closing = false;
+      return false;
     }
   }
 }
@@ -149,11 +166,27 @@ class _WindowCloseObserver with WindowListener {
 class _AppLifecycleObserver extends WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused) {
+      unawaited(_saveDrafts());
+    }
     if (state == AppLifecycleState.detached) {
       // Solo se detiene el Ollama que haya iniciado LightChat. Si lo inició el
       // usuario (lo normal), se deja en marcha: Ollama libera el modelo según
       // su propio `keep_alive`.
       OllamaService.instance.stopServer();
+    }
+  }
+
+  Future<void> _saveDrafts() async {
+    try {
+      await DraftService.instance.flush().timeout(UiConfig.draftFlushTimeout);
+    } catch (error) {
+      debugPrint('No se pudo guardar el borrador en segundo plano: $error');
+      _messengerKey.currentState?.showSnackBar(const SnackBar(
+          content: Text(
+              'No se pudo guardar el borrador. Se conserva mientras la app permanezca abierta.')));
     }
   }
 }
@@ -174,6 +207,7 @@ class MyApp extends StatelessWidget {
       ],
       child: Consumer<ThemeService>(builder: (context, themeService, _) {
         return MaterialApp(
+          scaffoldMessengerKey: _messengerKey,
           title: 'LightChat',
           theme: _buildAppTheme(Brightness.light),
           darkTheme: _buildAppTheme(Brightness.dark),

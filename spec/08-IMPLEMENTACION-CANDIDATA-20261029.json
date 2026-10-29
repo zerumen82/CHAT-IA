@@ -1,0 +1,147 @@
+[
+  {
+    "path": "lib/main.dart",
+    "originalSha256": "E2D77C3B06112E8E086CC7BC7E48D2C7D0E4C9BD72BD88B643D7A51760F7DF60",
+    "candidateSha256": "C70FA234163B43035E06CDE15A1B848F01CD253D57F409C159F3AF32A64CE84C"
+  },
+  {
+    "path": "lib/config/chat_config.dart",
+    "originalSha256": null,
+    "candidateSha256": "846C5B1873A58D62D62364B21645C5CA5ECAF03CD9F9F55DF3BDA088E0D036AB"
+  },
+  {
+    "path": "lib/config/spreadsheet_config.dart",
+    "originalSha256": null,
+    "candidateSha256": "C918EB61074E2E00DC3F49ADBE7EF7EB7D5F4CEB4262325FD1836DEFF5F3A08E"
+  },
+  {
+    "path": "lib/config/ui_config.dart",
+    "originalSha256": null,
+    "candidateSha256": "71967925E71BBC55E07A92D48109A3630CEAADD4D1FF1AAF7623766F72A3B412"
+  },
+  {
+    "path": "lib/models/generation_phase.dart",
+    "originalSha256": null,
+    "candidateSha256": "2DD14391DFE612F4FEFCDB8C252AF24C9F4E495E0AF8F2ABF4EAACD22CC16348"
+  },
+  {
+    "path": "lib/models/spreadsheet_data.dart",
+    "originalSha256": null,
+    "candidateSha256": "7E7E0EF9B3117135813E02CC3F74A7C69C11FC9A8B9EC8E11F0F585557360CCF"
+  },
+  {
+    "path": "lib/screens/chat_screen.dart",
+    "originalSha256": "76184B933FCF25E1600D7C6FB6D12079F4DB3E977DC40E1A0F890BF3A652E847",
+    "candidateSha256": "294B58FCDF569AF4870CA6C718253B7E330FA46FFD23A0AC8AE138418CD64A8E"
+  },
+  {
+    "path": "lib/services/chat_service_ollama.dart",
+    "originalSha256": "BDEB61C1F4FCF7CF52C821C73951769BD085E7A2CD998AF2D539027E660510FE",
+    "candidateSha256": "24A3ABDE0B92F7231D79FABFA509DB13002CD941CA6CBC1FA3EAF86541AE8310"
+  },
+  {
+    "path": "lib/services/context_profile_service.dart",
+    "originalSha256": "6B13210B365174DF3712E998A361829C8D238EFE9E85A02C9A39A6E5F7EA1A98",
+    "candidateSha256": "F8622406B9057AF8040E52025100DE9EFB6C78B270B150B2083AE292373238D0"
+  },
+  {
+    "path": "lib/services/document_service.dart",
+    "originalSha256": "92C1E765E3C02D8AEE3AD879C73FE389EF096052092EBC48EBAEC5282FA677B3",
+    "candidateSha256": "15B3C0206A8D0C7328253F6EDFDAC842421F555C6000DA9F39B1E80F027DB4ED"
+  },
+  {
+    "path": "lib/services/document_store_service.dart",
+    "originalSha256": "3671E641A4681A44DA04473EDEDAD5D0687AFE4B32AE7A46B1BB62544FAC0A08",
+    "candidateSha256": "915F6A4556AE1E350927CFBDC60B8B79A41A2FB083E1527F59A83EE559826A2E"
+  },
+  {
+    "path": "lib/services/draft_service.dart",
+    "originalSha256": null,
+    "candidateSha256": "0BC8100AF40BA8D46A079E8DBBA91ED7670527A4A046E5CD02FF8477C36EF42A"
+  },
+  {
+    "path": "lib/services/ollama_service.dart",
+    "originalSha256": "6A65B3AF23381185E9E92CF2D11B141034CA17142C9400CB33D18DB90AC4732C",
+    "candidateSha256": "6E16AF4D0C24D07E8C53901670F8CF244730A3B3BC2BB3E0092F104C2ED23C1B"
+  },
+  {
+    "path": "lib/services/spreadsheet_analysis_service.dart",
+    "originalSha256": null,
+    "candidateSha256": "0AC60907B91E7C3EDB169A14EBD1ACC730FCF9B92CBD7171FCF9DC9CADC0A83F"
+  },
+  {
+    "path": "lib/widgets/chat_input.dart",
+    "originalSha256": "E06B560CCDDCCE6F18AA22FD8D3E75FD7B934807976B331B9170BCF22AE423ED",
+    "candidateSha256": "47118937817BF2A4724AE44ED5BAF2C226487850DB8DA77C0D90E920B131CB3C"
+  },
+  {
+    "path": "lib/widgets/chat_sources_dialog.dart",
+    "originalSha256": null,
+    "candidateSha256": "695CBF99CF45CEEC1325FC6EEDFD9988ED042AD5C2A7660640AFE094F1F77B98"
+  },
+  {
+    "path": "lib/widgets/conversation_sidebar.dart",
+    "originalSha256": "51786553AEF83DB7174C55E63640EFC1FDB21B08F4A3B438D7B5F3B6F18066A5",
+    "candidateSha256": "066E37B166F4840C5594882DC65F6677DA12E59526AC63A388D20BE09A3101CE"
+  },
+  {
+    "path": "lib/widgets/generation_status.dart",
+    "originalSha256": null,
+    "candidateSha256": "31DF4B041DF904EA434C3F6F25C28631E24E4F6B2FF46E748F25E6E82E872A5E"
+  },
+  {
+    "path": "lib/widgets/message_bubble.dart",
+    "originalSha256": "845C4C6623C99393A8637253D14BDB42442664D26280214A067AF178C44781DC",
+    "candidateSha256": "58168E19C1FAB1C55516B574679BB6413087F361190C82D78A8D303462246121"
+  },
+  {
+    "path": "lib/widgets/model_selector.dart",
+    "originalSha256": "FECC9BB28C7FA6D0B624954B8870A5FBF34251F3F84190821404F275C809E6A6",
+    "candidateSha256": "1096D66CC7E4D1ED29EDD49294DC6ACD0B7638F035DB8634E19B0703417ECBFD"
+  },
+  {
+    "path": "lib/widgets/spreadsheet_analysis_dialog.dart",
+    "originalSha256": null,
+    "candidateSha256": "E191886DB13D83A78A9E549838B8B1909CB68AB586016A4718E47759C7CBDD0A"
+  },
+  {
+    "path": "test/chat_input_interaction_test.dart",
+    "originalSha256": null,
+    "candidateSha256": "B2B913B8BBC9BC8588CE013270A90CD101E27DC80A316E0535F4DFD92108B189"
+  },
+  {
+    "path": "test/chat_service_ollama_test.dart",
+    "originalSha256": "F2D13B4E9A1DF1D775523BC451DDFA309B793DD725BFC8A79B4DC3992EF6E117",
+    "candidateSha256": "7897CEAD0242BC24B2216B349229B11A7528A409A7FFB007757693E8FFDB93B9"
+  },
+  {
+    "path": "test/draft_service_test.dart",
+    "originalSha256": null,
+    "candidateSha256": "844B3F1B76CB057E43BB0B90DD103F3DA2DD7AFD9FE4A70D6B0A9B2F929A75B0"
+  },
+  {
+    "path": "test/file_widgets_test.dart",
+    "originalSha256": "4214468F37FE672006EFBE19E94206C176FA0BE02C9561F246ECB43794D764E5",
+    "candidateSha256": "122E89C5B9B297BB014C79AD0B30FF6D6692CD475E7C0DADF72C4C65DA14D660"
+  },
+  {
+    "path": "test/live_documents_test.dart",
+    "originalSha256": "0457399197ADFF2A0F0021C36B043749C5564E9C4B16AA7F0E817A4CB22AE4CF",
+    "candidateSha256": "0E510F4AAF45828D4EDCA8EE4CD291CE235BD53FE6AE49DACDD91E20E505916D"
+  },
+  {
+    "path": "test/ollama_chat_transport_test.dart",
+    "originalSha256": null,
+    "candidateSha256": "1A2E788B523FE10C17325CE7CA4F8E8D499EAB24A0DD7DA08C2CC503FC9F8326"
+  },
+  {
+    "path": "test/spreadsheet_analysis_test.dart",
+    "originalSha256": null,
+    "candidateSha256": "21AD7789D57E13C26566462572BD270251408E20685AE836840886F4B236E1CC"
+  },
+  {
+    "path": "test/widget_test.dart",
+    "originalSha256": "FAF550539A48F00F1DEAF42667B8F0A1F479A6FE964135B9DC269F3F7A459274",
+    "candidateSha256": "964211A6AAF457C6F6BCB6F22F54CCF93F87FF0BDDDE2E37BEF0CEC62BF94B48"
+  }
+]

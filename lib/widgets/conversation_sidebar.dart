@@ -1,12 +1,22 @@
 import 'package:flutter/material.dart';
+import '../services/conversation_service.dart';
+import 'file_actions.dart';
 import 'package:provider/provider.dart';
 
 import '../models/conversation.dart';
 import '../services/chat_service_ollama.dart';
 
 /// Barra lateral con las conversaciones guardadas: abrir, renombrar y borrar.
-class ConversationSidebar extends StatelessWidget {
-  const ConversationSidebar({super.key});
+class ConversationSidebar extends StatefulWidget {
+  final VoidCallback? onConversationSelected;
+  const ConversationSidebar({super.key, this.onConversationSelected});
+
+  @override
+  State<ConversationSidebar> createState() => _ConversationSidebarState();
+}
+
+class _ConversationSidebarState extends State<ConversationSidebar> {
+  String _query = '';
 
   @override
   Widget build(BuildContext context) {
@@ -14,7 +24,10 @@ class ConversationSidebar extends StatelessWidget {
 
     return Consumer<ChatServiceOllama>(
       builder: (context, chatService, _) {
-        final conversations = chatService.conversations;
+        final conversations = chatService.conversations
+            .where((conversation) =>
+                conversation.title.toLowerCase().contains(_query.toLowerCase()))
+            .toList();
 
         return Container(
           color: colorScheme.surfaceContainerLow,
@@ -46,7 +59,12 @@ class ConversationSidebar extends StatelessWidget {
                           : 'Nueva conversación',
                       onPressed: chatService.isLoading
                           ? null
-                          : () => chatService.newConversation(),
+                          : () async {
+                              await chatService.newConversation();
+                              if (mounted) {
+                                widget.onConversationSelected?.call();
+                              }
+                            },
                       icon: const Icon(Icons.add_comment_outlined, size: 18),
                       visualDensity: VisualDensity.compact,
                     ),
@@ -54,13 +72,27 @@ class ConversationSidebar extends StatelessWidget {
                 ),
               ),
               Divider(height: 1, color: colorScheme.outlineVariant),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                child: TextField(
+                  onChanged: (value) => setState(() => _query = value.trim()),
+                  decoration: const InputDecoration(
+                    hintText: 'Buscar conversaciones',
+                    prefixIcon: Icon(Icons.search, size: 18),
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
               Expanded(
                 child: conversations.isEmpty
                     ? Center(
                         child: Padding(
                           padding: const EdgeInsets.all(16),
                           child: Text(
-                            'No hay conversaciones guardadas.',
+                            _query.isEmpty
+                                ? 'No hay conversaciones guardadas.'
+                                : 'No hay conversaciones que coincidan.',
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 12,
@@ -77,6 +109,7 @@ class ConversationSidebar extends StatelessWidget {
                           isActive: conversations[index].id ==
                               chatService.activeConversationId,
                           isBusy: chatService.isLoading,
+                          onSelected: widget.onConversationSelected,
                         ),
                       ),
               ),
@@ -106,11 +139,13 @@ class _ConversationTile extends StatelessWidget {
   final ConversationSummary conversation;
   final bool isActive;
   final bool isBusy;
+  final VoidCallback? onSelected;
 
   const _ConversationTile({
     required this.conversation,
     required this.isActive,
     required this.isBusy,
+    this.onSelected,
   });
 
   @override
@@ -118,24 +153,50 @@ class _ConversationTile extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final chatService = context.read<ChatServiceOllama>();
 
-    return Material(
-      color: isActive
-          ? colorScheme.primaryContainer.withValues(alpha: 0.45)
-          : Colors.transparent,
+    final initial = conversation.title.isNotEmpty
+        ? conversation.title[0].toUpperCase()
+        : '?';
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: isActive
+            ? colorScheme.primaryContainer.withValues(alpha: 0.18)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        border: isActive
+            ? Border.all(
+                color: colorScheme.primary.withValues(alpha: 0.5), width: 1)
+            : null,
+      ),
       child: InkWell(
+        borderRadius: BorderRadius.circular(10),
         onTap: isBusy
             ? null
-            : () => chatService.selectConversation(conversation.id),
+            : () async {
+                await chatService.selectConversation(conversation.id);
+                if (context.mounted) {
+                  onSelected?.call();
+                }
+              },
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 8, 2, 8),
+          padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
           child: Row(
             children: [
-              Icon(
-                isActive ? Icons.chat_bubble : Icons.chat_bubble_outline,
-                size: 16,
-                color: isActive
+              CircleAvatar(
+                radius: 14,
+                backgroundColor: isActive
                     ? colorScheme.primary
-                    : colorScheme.onSurfaceVariant,
+                    : colorScheme.surfaceContainerLow,
+                child: Text(
+                  initial,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: isActive
+                        ? colorScheme.onPrimary
+                        : colorScheme.onSurfaceVariant,
+                  ),
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -169,6 +230,7 @@ class _ConversationTile extends StatelessWidget {
                 ),
               ),
               PopupMenuButton<String>(
+                enabled: !isBusy,
                 tooltip: 'Opciones de la conversación',
                 icon: Icon(
                   Icons.more_horiz,
@@ -178,6 +240,21 @@ class _ConversationTile extends StatelessWidget {
                 padding: EdgeInsets.zero,
                 onSelected: (action) {
                   switch (action) {
+                    case 'export':
+                      final saved =
+                          conversation.id == chatService.activeConversationId
+                              ? List.of(chatService.messages)
+                              : null;
+                      () async {
+                        final messages = saved ??
+                            await ConversationService.loadMessages(
+                                conversation.id);
+                        if (context.mounted) {
+                          await showExportDialog(context,
+                              title: conversation.title, messages: messages);
+                        }
+                      }();
+                      break;
                     case 'rename':
                       _showRenameDialog(context, chatService);
                       break;
@@ -187,6 +264,14 @@ class _ConversationTile extends StatelessWidget {
                   }
                 },
                 itemBuilder: (context) => [
+                  PopupMenuItem(
+                      value: 'export',
+                      enabled: !chatService.isLoading,
+                      child: const ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(Icons.save_alt, size: 18),
+                          title: Text('Exportar'))),
                   const PopupMenuItem(
                     value: 'rename',
                     child: ListTile(
@@ -244,7 +329,9 @@ class _ConversationTile extends StatelessWidget {
     );
     controller.dispose();
 
-    if (result == null) return;
+    if (result == null) {
+      return;
+    }
     await chatService.renameConversation(conversation.id, result);
   }
 
@@ -273,7 +360,9 @@ class _ConversationTile extends StatelessWidget {
       ),
     );
 
-    if (confirmed != true) return;
+    if (confirmed != true) {
+      return;
+    }
     await chatService.deleteConversation(conversation.id);
     messenger.showSnackBar(
       const SnackBar(
@@ -287,8 +376,12 @@ class _ConversationTile extends StatelessWidget {
   String _formatWhen(DateTime date) {
     final now = DateTime.now();
     final difference = now.difference(date);
-    if (difference.inMinutes < 1) return 'ahora';
-    if (difference.inHours < 1) return 'hace ${difference.inMinutes} min';
+    if (difference.inMinutes < 1) {
+      return 'ahora';
+    }
+    if (difference.inHours < 1) {
+      return 'hace ${difference.inMinutes} min';
+    }
     if (now.year == date.year &&
         now.month == date.month &&
         now.day == date.day) {
@@ -296,7 +389,9 @@ class _ConversationTile extends StatelessWidget {
       final minute = date.minute.toString().padLeft(2, '0');
       return '$hour:$minute';
     }
-    if (difference.inDays < 7) return 'hace ${difference.inDays} d';
+    if (difference.inDays < 7) {
+      return 'hace ${difference.inDays} d';
+    }
     final day = date.day.toString().padLeft(2, '0');
     final month = date.month.toString().padLeft(2, '0');
     return '$day/$month/${date.year}';
