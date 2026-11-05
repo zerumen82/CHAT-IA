@@ -3,7 +3,7 @@
 > **Propósito:** memoria de largo plazo del proyecto para agentes de IA y colaboradores.
 > Actualizar este archivo cada vez que cambien hechos relevantes (fases completadas, decisiones, deuda conocida, entorno). Guía de trabajo en [`AGENTS.md`](AGENTS.md).
 
-**Última actualización:** 2026-10-29
+**Última actualización:** 2026-11-03
 
 ---
 
@@ -391,3 +391,147 @@
   tester nativo PASS. La publicación no modifica el código verificado.
 - El parche histórico se guarda sin líneas de contexto (git apply --unidiff-zero)
   para evitar falsos avisos de whitespace por el marcador de contexto vacío.
+
+## 10. Arranque en blanco y maximize perdido — 2026-11-01 (verificado)
+
+- Síntoma: la app arrancaba (proceso vivo, sin errores en log) pero la ventana
+  quedaba pequeña (1280x720) en blanco, sin pintar la UI hasta redimensionar.
+- Causa: `windowManager.show()` es asíncrono (`ShowWindowAsync`); encadenar
+  `show → maximize → focus` sin pausa pierde el maximize (el `PostMessage`
+  `SC_MAXIMIZE` del plugin 0.5.2 se procesa antes de que la ventana sea
+  visible) y la primera composición queda en blanco.
+- Arreglo mínimo en `lib/main.dart`: tras `show()`, esperar con sondeo
+  (`isVisible()`, tope 20x50ms) antes de `maximize()` + `focus()`.
+  Verificado: dos arranques manuales del Release maximizan solos
+  (`rect=-8,-8,1928,1040`) y pintan la UI sin intervención.
+- Limpieza: retirado el sistema temporal de logs síncronos a `logs/` que se
+  había colado en `lib/services/document_service.dart` (escribía en cada
+  extracción, incluso dentro de isolates, y dejaba `logs/` sin trackear).
+  `dart analyze` limpio, suite `144 PASS + 1 live opt-in omitido`, build 66s.
+- El borrador del usuario y su adjunto sobrevivieron al cierre/rebuild y envió
+  su mensaje a Ollama con normalidad tras el arreglo (verificación en vivo).
+
+
+---
+
+## 11. APIs cloud opcionales - 2026-11-03 (verificado)
+
+### Decisiones del usuario (4, plan aprobado antes de implementar)
+
+- **(A)** Añadir APIs cloud **opcionales** y actualizar `AGENTS.md`/`MEMORY.md`
+  al nuevo alcance (resuelve la contradiccion con el "sin nube, sin cuentas,
+  sin credenciales" original). Ollama sigue siendo el backend por defecto.
+- **(B)** Soportar los **16-17 proveedores** del `APIS.txt` del Escritorio en
+  la primera fase, incluidos los que no son OpenAI-compatible.
+- **(C)** **Importador automatico** del txt (ademas de alta manual).
+- **(D)** Claves en **SharedPreferences sin dependencias nuevas** (en claro en
+  el perfil local; decision explicita del usuario, no se instalo ningun
+  paquete).
+
+### Que se implemento
+
+- `lib/config/api_config.dart` - catalogo de 17 proveedores (id, nombre,
+  baseUrl, adaptador, notas), alias tolerantes a las erratas del txt
+  (`OPENMROUTER`, `ANTROPIC`, `hugginfac`, `minmax`), ids `api:<prov>/<modelo>`
+  y `cloudContextTokens = 65536`.
+- `lib/services/api_key_store.dart` - persistencia de claves/modelos + parser
+  tolerante de `APIS.txt` (separadores `:`, `=`, `;`, lineas en blanco,
+  continuaciones). Una segunda clave bajo el mismo nombre se **reporta** en
+  `extraKeys`, nunca se descarta en silencio.
+- `lib/services/api_service.dart` - 4 adaptadores con el mismo contrato de
+  `OllamaService.generateChat` (eventos `OllamaChatResponse`, `done` final,
+  cancelacion, timeouts): `openai-compatible` (SSE), `anthropic` (SSE),
+  `gemini` (SSE) y `ai-horde` (**cola asincrona sin streaming**, se declara
+  en la UI en lugar de simular un stream falso).
+- UI: 5a pestana **«APIs»** en `OllamaManagerScreen` + `api_providers_tab.dart`
+  + `api_provider_dialog.dart` (clave ocultable, modelo editable, test de
+  conexion real, importar APIS.txt con selector nativo, borrado con
+  confirmacion).
+- Integracion en el chat: `ChatServiceOllama.canGenerate` / `canSend`,
+  `availableApiModels`, seccion «APIs cloud» en `model_selector.dart`,
+  enrutado en `_sendMessage` y `ContextProfileService` con perfil propio
+  para ids `api:`.
+
+### Verificacion (Definicion de Listo)
+
+- `flutter analyze` -> **0 incidencias**.
+- `flutter test --no-pub` -> **163 PASS + 2 live opt-in omitidos**
+  (144 previas sin romper + 19 nuevas: parser, store, 4 adaptadores,
+  testConnection y pestana UI).
+- `flutter build windows --no-pub` -> **PASS 72,3 s**.
+- Sin claves ni `APIS.txt` en el repositorio; `git status` revisado.
+
+### Evidencia de llamada REAL (no simulada)
+
+Prueba opt-in `test/live_api_test.dart` con el mismo transporte que usa la UI.
+Evidencia en `.dart_tool/live-evidence-2026-11-03/api-*.json`:
+
+- **Groq** `openai/gpt-oss-20b` -> `lightchat-live-ok`
+  (`doneReason=stop`, 5 chunks). PASS.
+- **Mistral** `ministral-8b-latest` -> `No.`
+  (`doneReason=stop`, 3 chunks). PASS.
+
+Barrido real de las claves del `APIS.txt` (todos los mensajes son los del
+proveedor, tal cual):
+
+| Proveedor | Resultado |
+|---|---|
+| groq, mistral | **funcionan** (respuesta real) |
+| deepseek | HTTP 402 Insufficient Balance |
+| openrouter | HTTP 402 Insufficient credits (cuenta sin comprar) |
+| openai | HTTP 429 no credits remaining |
+| huggingface | HTTP 402 no remaining credits |
+| minimax | HTTP 402 insufficient balance (1008) |
+| xiaomi | HTTP 402 Insufficient account balance |
+| sambanova | HTTP 401 Incorrect API key provided |
+| anthropic | HTTP 401 invalid x-api-key (el valor del txt no es una clave Anthropic) |
+| zen (OpenCode) | HTTP 401 api_key_expired |
+| xai | HTTP 403 team sin creditos |
+| gemini | clave valida; `gemini-2.0-flash` retirado (usar `gemini-flash-latest`), luego HTTP 503 demanda alta |
+| nvidia | clave valida; `meta/llama-3.1-8b-instruct` EOL 2026-08-26, luego timeout 30 s |
+| aihorde | HTTP 401 la clave del txt no esta registrada en stablehorde.net |
+| perplexity | HTTP 404 en `/models` (ruta a revisar) |
+| moonshot | sin clave en el txt |
+
+Leccion: el **test de conexion es obligatorio**; no se puede prometer que las
+17 claves vivan (regla NO FAKE cumplida: los fallos se muestran tal cual).
+
+### Limites conocidos y deuda declarada
+
+- **Vision cloud bloqueada**: `ContextProfileService` devuelve
+  `capabilitiesKnown=false` para ids `api:` (no se deduce vision del nombre),
+  asi que adjuntar imagenes a un modelo cloud muestra el aviso de capacidades
+  sin verificar. Pendiente: flag de vision por proveedor/modelo.
+- Herramientas de creacion de archivos solo en Ollama (los adaptadores cloud
+  no envian `tools`); correcto, pero la UI lo muestra como «por comprobar».
+- El banner «Conectar a Ollama» sigue apareciendo si no hay modelos locales
+  aunque haya APIs configuradas (no bloquea).
+- `numCtx` cloud = 65536 declarado; el limite real lo fija el proveedor y su
+  error se muestra.
+- AI Horde puede tardar minutos (cola de voluntarios); el test de conexion
+  lo declara en lugar de prometer velocidad.
+- Las claves quedan **en claro** en SharedPreferences (decision D). Si alguna
+  vez se quiere cifrar, exige aprobar una dependencia nueva.
+
+
+## 12. Búsqueda web normal - 2026-11-04 (verificado)
+
+- Implementada herramienta web_search para modelos con herramientas.
+- Fuente: DuckDuckGo Instant Answer API, sin API key.
+- Sin acceso a dark net ni fetch arbitrario de URLs.
+- Servicio WebSearchService con tests (5 PASS).
+- Integrado en chat_service_ollama con segunda generación tras la búsqueda.
+- flutter analyze: No issues found.
+- flutter test: 168 PASS + 2 opt-in live omitidos.
+- flutter build windows: PASS (80.7s).
+
+
+## 13. Catálogo de Ollama actualizado - 2026-11-05 (verificado)
+
+- Ollama.com dejó de publicar el total de modelos en el placeholder.
+- fetchAvailableModels ahora pagina secuencialmente hasta una página vacía
+  cuando no hay conteo disponible.
+- Catálogo carga de nuevo en la configuración de Ollama.
+- flutter analyze: sin incidencias.
+- flutter test ollama_catalog: 3 PASS.
+- flutter build windows: PASS (78.8s).

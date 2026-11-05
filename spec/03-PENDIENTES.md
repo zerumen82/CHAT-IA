@@ -59,3 +59,16 @@ La revisión encontró modificaciones y borrados preexistentes en git. Preservar
 - Sin OCR ni dependencias nuevas. Pruebas/modelos reales en esta máquina no
   garantizan iguales tiempos o consumo con otros modelos.
 
+# Pendientes APIs cloud — 2026-11-03
+
+| Pendiente | Detalle | Prioridad |
+|---|---|---|
+| Visión en modelos cloud | `ContextProfileService` devuelve `capabilitiesKnown=false` para ids `api:` (no se deduce visión del nombre), así que adjuntar imágenes a una API muestra el aviso de capacidades sin verificar. Requiere un flag de visión **declarado por proveedor/modelo**, no deducido. | Media |
+| Herramientas de archivos solo en Ollama | Los adaptadores cloud no envían `tools`; correcto por seguridad, pero la UI muestra «por comprobar» en vez de «no disponible en APIs». | Baja |
+| Banner «Conectar a Ollama» en modo cloud | Si no hay modelos locales aparece el acceso rápido a Ollama aunque haya APIs configuradas. No bloquea, pero confunde. | Baja |
+| `perplexity` sin `/models` | `GET /models` devuelve 404; falta confirmar la ruta correcta o usar solo test de generación. | Baja |
+| Modelo de `gemini` por defecto | `gemini-2.0-flash` retirado (2026-11-03). El usuario debe escribir `gemini-flash-latest` u otro vigente en el campo modelo. | Media |
+| AI Horde registrado | La clave del `APIS.txt` no está registrada en stablehorde.net → `401`. Requiere alta del usuario; además es cola lenta y sin streaming. | Baja |
+| Cifrado de claves | Hoy en claro en SharedPreferences (decisión D del usuario). Cifrar exige aprobar una dependencia nueva. | Baja |
+| Prueba manual de la UI | La llamada real se ejecutó por `ApiService`; falta que el usuario haga clic en «Importar APIS.txt» y elija Groq/Mistral en el selector. | **Alta** |
+

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/ollama_service.dart';
+import '../widgets/api_providers_tab.dart';
 
 /// Pantalla de gestión de Ollama
 class OllamaManagerScreen extends StatefulWidget {
@@ -22,7 +23,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -64,6 +65,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
                 _buildInstalledTab(),
                 _buildSettingsTab(),
                 _buildLogsTab(),
+                const ApiProvidersTab(),
               ],
             ),
           ),
@@ -258,6 +260,7 @@ class _OllamaManagerScreenState extends State<OllamaManagerScreen>
           Tab(text: 'Instalados', icon: Icon(Icons.download_done)),
           Tab(text: 'Ajustes', icon: Icon(Icons.settings)),
           Tab(text: 'Registros', icon: Icon(Icons.terminal)),
+          Tab(text: 'APIs', icon: Icon(Icons.cloud)),
         ],
       ),
     );

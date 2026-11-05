@@ -94,3 +94,80 @@ dos respuestas Ollama reales, escritura/cursor/tildes, etiquetas y borrador tras
 reinicio. Modelo/chat originales restaurados. Cierre y evidencia en MEMORY.md
 y spec/09; límites del arnés en tester-result.json.
 
+# APIs cloud opcionales — plan aprobado 2026-11-03
+
+Decisiones del usuario (4): **(A)** añadir APIs cloud opcionales y actualizar
+AGENTS.md/MEMORY.md al nuevo alcance · **(B)** soportar los **16 proveedores**
+del `APIS.txt` del Escritorio en la primera fase · **(C)** **importador
+automático** del txt (más alta manual de proveedores custom) · **(D)** claves en
+**SharedPreferences** sin dependencias nuevas. Sin instalación de paquetes.
+
+## API-01 — Alta y uso de proveedores cloud desde la UI
+
+- Pestaña «APIs» en el gestor: lista de proveedores, alta/edición/borrado, campo
+  clave con mostrar/ocultar, campo de modelo editable por proveedor y botón de
+  test de conexión con resultado real (no se promete que las 17 claves vivan).
+- Botón «Importar APIS.txt» con selector nativo de archivos (la ruta no se
+  teclea ni se fija en código); parser tolerante a separadores `:`, `=`, `;`,
+  líneas en blanco y continuaciones de línea; el archivo original no se mueve ni
+  se copia al repositorio.
+- Claves y endpoints viven en configuración (`api_config.dart`) + preferencias;
+  ninguna clave en el código fuente ni en git.
+- Ollama sigue siendo el backend por defecto (local-first). Elegir una API es
+  una acción explícita y reversible; el flujo Ollama existente no cambia.
+
+## API-02 — Transporte y streaming
+
+- Cuatro adaptadores declarados: `openai-compatible` (SSE), `anthropic`
+  (Messages API), `gemini` (generateContent) y `ai-horde` (**sin streaming**,
+  respuesta JSON final; la UI lo indica, no se simula un stream falso).
+- Parada, regenerar y error visible funcionan igual que en Ollama; los fallos
+  de red/auth muestran el mensaje real del proveedor.
+- Sin dependencias nuevas: `http` + `file_selector` + `shared_preferences`
+  ya presentes.
+
+## API-03 — Evidencia
+
+- `flutter analyze` 0 incidencias; suite completa en verde (144+ pruebas
+  existentes + nuevas del parser, store, adaptadores y pestaña).
+- Llamada **real** a ≥1 proveedor cloud desde la UI nueva, con respuesta
+  pegada en `MEMORY.md`; `flutter build windows` PASS. Reviewer APPROVE y
+  tester PASS antes de cerrar.
+
+---
+
+# Cierre API-01/02/03 — 2026-11-03 (PASS)
+
+**Verificación ejecutada:**
+
+1. `flutter analyze --no-pub` → **0 incidencias**.
+2. `flutter test --no-pub` → **163 PASS + 2 live opt-in omitidos**
+   (las 144 previas intactas + 19 nuevas: alias del txt, parser de
+   `APIS.txt`, persistencia del store, los 4 adaptadores, `testConnection`
+   y la pestaña «APIs»).
+3. `flutter build windows --no-pub` → **PASS 72,3 s** (`lightchat.exe`).
+4. **Llamada real** con `test/live_api_test.dart` (`--dart-define=LIGHTCHAT_LIVE=true`),
+   el mismo `ApiService.generateChat` que invoca el chat:
+   - **Groq** `openai/gpt-oss-20b` → `lightchat-live-ok` (`doneReason=stop`).
+   - **Mistral** `ministral-8b-latest` → `No.` (`doneReason=stop`).
+   - Evidencia JSON en `.dart_tool/live-evidence-2026-11-03/api-*.json`.
+5. `git status` revisado: sin claves, sin `APIS.txt`, sin artefactos nuevos.
+
+**Honestidad del alcance (regla NO FAKE):** la llamada real se ejecutó por
+`ApiService`, que es exactamente lo que la pestaña «APIs» y el selector de
+modelos invocan; **no** se hizo clic en la UI a mano (requiere sesión gráfica
+del usuario). La interacción humana pendiente es: abrir Gestor → pestaña
+«APIs» → «Importar APIS.txt» → elegir Groq o Mistral en el selector del chat.
+
+**Mapa real de las claves del `APIS.txt`** (barrido con llamada HTTP real;
+los textos son los del proveedor): funcionan **groq** y **mistral**; el resto
+responde con su error literal — deepseek/openrouter/openai/huggingface/minimax
+/xiaomi `402` sin saldo, sambanova/anthropic `401` clave inválida, zen `401`
+caducada, xai `403` sin créditos, gemini/nvidia clave válida pero modelo
+retirado o saturado, aihorde `401` sin registrar, perplexity `404`,
+moonshot sin clave. Detalle completo en `MEMORY.md` §11.
+
+**Deuda declarada** (en `MEMORY.md` §11): visión cloud bloqueada por
+`capabilitiesKnown=false`, herramientas de archivos solo en Ollama, banner de
+Ollama visible en modo cloud, claves en claro en SharedPreferences.
+

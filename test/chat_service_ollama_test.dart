@@ -285,7 +285,7 @@ void main() {
     expect(request['options']['temperature'], 0.2);
     expect(
       sentMessages.first['content'],
-      contains('responde únicamente con la información del texto extraído'),
+      contains('basa la respuesta en el texto extraído'),
     );
     expect(chatService.messages.first.documents, isNotEmpty);
   });

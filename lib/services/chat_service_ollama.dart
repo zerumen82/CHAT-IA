@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/vllm_config.dart';
+import '../config/api_config.dart';
 import '../config/context_config.dart';
 import '../config/chat_config.dart';
 import '../models/generation_phase.dart';
@@ -17,12 +18,14 @@ import 'context_profile_service.dart';
 import 'document_store_service.dart';
 import 'document_context_service.dart';
 import 'generated_file_service.dart';
-import 'context_snapshot_service.dart';
+import 'web_search_service.dart';import 'context_snapshot_service.dart';
 import '../models/conversation.dart';
 import '../models/document_attachment.dart';
 import '../models/message.dart';
 import 'context_service.dart';
 import 'conversation_service.dart';
+import 'api_key_store.dart';
+import 'api_service.dart';
 import 'ollama_service.dart';
 
 /// ChatService adaptado para Ollama
@@ -240,6 +243,31 @@ class ChatServiceOllama with ChangeNotifier {
   List<String> _availableModels = [];
   List<String> get availableModels => _availableModels;
 
+  /// Modelos cloud dados de alta con clave y modelo (`api:proveedor/modelo`).
+  List<String> get availableApiModels =>
+      ApiKeyStore.instance.selectableModelIds();
+
+  /// true si el modelo seleccionado se puede usar ahora: un modelo cloud con
+  /// clave guardada, u Ollama en marcha. No depende de que Ollama esté
+  /// disponible cuando se usa una API (ese es el punto de la pestaña APIs).
+  bool get canGenerate {
+    final parsed = ApiConfig.parseApiModelId(_selectedModel);
+    if (parsed != null) {
+      return (ApiKeyStore.instance.apiKeyOf(parsed.providerId) ?? '')
+          .isNotEmpty;
+    }
+    return _isConnected;
+  }
+
+  /// Condición que habilita el envío en el campo de entrada: para Ollama
+  /// exige además que haya al menos un modelo instalado.
+  bool get canSend {
+    if (ApiConfig.isApiModel(_selectedModel)) {
+      return canGenerate;
+    }
+    return _isConnected && _availableModels.isNotEmpty;
+  }
+
   // Contexto
   String _userLanguage = 'español';
   String get userLanguage => _userLanguage;
@@ -264,7 +292,21 @@ class ChatServiceOllama with ChangeNotifier {
 
   ChatServiceOllama() {
     _ollamaService.addListener(_onOllamaServiceChanged);
+    ApiKeyStore.instance.addListener(_onApiKeysChanged);
+    unawaited(ApiKeyStore.instance.load());
     _initService();
+  }
+
+  /// Las claves cloud cambian fuera de Ollama: al importarlas o borrarlas hay
+  /// que reevaluar si el modelo seleccionado sigue siendo usable.
+  void _onApiKeysChanged() {
+    if (_disposed) {
+      return;
+    }
+    if (_selectedModel.isNotEmpty && canGenerate) {
+      unawaited(_refreshSelectedProfile());
+    }
+    notifyListeners();
   }
 
   Future<void> _initService() async {
@@ -533,19 +575,21 @@ class ChatServiceOllama with ChangeNotifier {
       _availableModels = models.map((m) => m.name).toList();
 
       // Si ya hay un modelo preferido y está disponible, usarlo
-      if (_selectedModel.isEmpty && _availableModels.isNotEmpty) {
-        // Primero intentar usar el modelo preferido si ya estaba cargado
+      final cloudModels = ApiKeyStore.instance.selectableModelIds();
+      if (_selectedModel.isEmpty) {
         final preferredModel = await ContextService.loadPreferredModel();
         if (preferredModel.isNotEmpty &&
-            _availableModels.contains(preferredModel)) {
+            (cloudModels.contains(preferredModel) ||
+                _availableModels.contains(preferredModel))) {
           _selectedModel = preferredModel;
-        } else {
+        } else if (_availableModels.isNotEmpty) {
           // Si no, usar el primer modelo disponible
           _selectedModel = _availableModels.first;
         }
-      } else if (_selectedModel.isNotEmpty &&
+      } else if (!ApiConfig.isApiModel(_selectedModel) &&
           !_availableModels.contains(_selectedModel)) {
-        // El modelo preferido ya no está disponible, usar el primero
+        // El modelo preferido ya no está disponible, usar el primero.
+        // Una selección cloud nunca se sustituye por un modelo local.
         if (_availableModels.isNotEmpty) {
           _selectedModel = _availableModels.first;
         }
@@ -574,7 +618,7 @@ class ChatServiceOllama with ChangeNotifier {
   /// Reenvía la última pregunta cuando la respuesta terminó en error,
   /// sin duplicar el mensaje del usuario ni reenviar el texto del error.
   Future<void> retryLastMessage() async {
-    if (_isLoading || !_isConnected || _selectedModel.isEmpty) {
+    if (_isLoading || !canGenerate || _selectedModel.isEmpty) {
       return;
     }
 
@@ -588,7 +632,7 @@ class ChatServiceOllama with ChangeNotifier {
 
   /// Vuelve a pedir la última respuesta al modelo, descartándola.
   Future<void> regenerateLastResponse() async {
-    if (_isLoading || !_isConnected || _selectedModel.isEmpty) {
+    if (_isLoading || !canGenerate || _selectedModel.isEmpty) {
       return;
     }
 
@@ -608,7 +652,7 @@ class ChatServiceOllama with ChangeNotifier {
   /// Sustituye el texto de un mensaje del usuario y vuelve a preguntar,
   /// descartando la conversación posterior a ese mensaje.
   Future<void> editAndResend(int index, String newText) async {
-    if (_isLoading || !_isConnected || _selectedModel.isEmpty) {
+    if (_isLoading || !canGenerate || _selectedModel.isEmpty) {
       return;
     }
     if (index < 0 || index >= _messages.length) {
@@ -719,8 +763,8 @@ class ChatServiceOllama with ChangeNotifier {
             : ' Para crear archivos, elige una carpeta en Contexto y archivos y usa un modelo con herramientas. No inventes enlaces.');
     final responseTokens =
         math.min(OllamaConfig.maxResponseTokens, profile.tokens ~/ 4);
-    final toolChars =
-        useTools ? jsonEncode(GeneratedFileService.tools).length : 0;
+    final allTools = WebSearchService.allChatTools(GeneratedFileService.tools);
+    final toolChars = useTools ? jsonEncode(allTools).length : 0;
     final imageTokens = (images?.length ?? currentImageCount) *
         ContextConfig.imageReserveTokens;
     final available = (profile.tokens -
@@ -851,7 +895,7 @@ class ChatServiceOllama with ChangeNotifier {
         .where((d) => d.isReady)
         .toList();
     if (_isLoading ||
-        !_isConnected ||
+        !canGenerate ||
         _selectedModel.isEmpty ||
         _activeConversationId == null ||
         (text.trim().isEmpty &&
@@ -1003,19 +1047,32 @@ class ChatServiceOllama with ChangeNotifier {
       final done = Completer<void>();
       _streamCompleter = done;
       final toolsEnabled = prepared.profile.supportsTools;
-      _streamSubscription = _ollamaService
-          .generateChat(
-        model: _selectedModel,
-        messages: prepared.messages,
-        temperature: prepared.documents.text.isEmpty
-            ? OllamaConfig.defaultTemperature
-            : OllamaConfig.documentTemperature,
-        numPredict: prepared.responseTokens,
-        numCtx: prepared.profile.tokens,
-        think: OllamaConfig.isThinkingModel(_selectedModel) ? false : null,
-        tools: toolsEnabled ? GeneratedFileService.tools : null,
-        cancellation: _requestCancellation!.future,
-      )
+      final requestTemperature = prepared.documents.text.isEmpty
+          ? OllamaConfig.defaultTemperature
+          : OllamaConfig.documentTemperature;
+      // Un modelo `api:proveedor/modelo` usa el transporte cloud; el resto
+      // sigue yendo a Ollama sin ningún cambio de comportamiento.
+      final cloudModel = ApiConfig.parseApiModelId(_selectedModel);
+      final generation = cloudModel == null
+          ? _ollamaService.generateChat(
+              model: _selectedModel,
+              messages: prepared.messages,
+              temperature: requestTemperature,
+              numPredict: prepared.responseTokens,
+              numCtx: prepared.profile.tokens,
+              think: OllamaConfig.isThinkingModel(_selectedModel) ? false : null,
+              tools: toolsEnabled ? WebSearchService.allChatTools(GeneratedFileService.tools) : null,
+              cancellation: _requestCancellation!.future,
+            )
+          : ApiService.instance.generateChat(
+              providerId: cloudModel.providerId,
+              model: cloudModel.model,
+              messages: prepared.messages,
+              temperature: requestTemperature,
+              numPredict: prepared.responseTokens,
+              cancellation: _requestCancellation!.future,
+            );
+      _streamSubscription = generation
           .listen((response) {
         promptEvalCount = response.promptEvalCount ?? promptEvalCount;
         evalCount = response.evalCount ?? evalCount;
@@ -1071,34 +1128,153 @@ class ChatServiceOllama with ChangeNotifier {
             'La respuesta se interrumpió antes de terminar.');
       }
       if (!_stopRequested && calls.isNotEmpty) {
-        _setPhase(GenerationPhase.creatingFiles);
+        final fileCalls = calls.where((call) {
+          final name = (call['function'] is Map)
+              ? (call['function']['name'] as String? ?? '')
+              : '';
+          return name.startsWith('create_');
+        }).toList();
+        final searchCalls = calls.where((call) {
+          final name = (call['function'] is Map)
+              ? (call['function']['name'] as String? ?? '')
+              : '';
+          return name == 'web_search';
+        }).toList();
+        final unknownCalls = calls
+            .where((call) => !fileCalls.contains(call) && !searchCalls.contains(call))
+            .toList();
+        if (unknownCalls.isNotEmpty) {
+          throw StateError('El modelo intentó usar una herramienta desconocida.');
+        }
         if (!toolsEnabled) {
           throw StateError(
               'El modelo intentó usar una herramienta no habilitada.');
         }
         if (calls.length > ContextConfig.maxToolCalls) {
-          throw StateError('Se pidieron demasiados archivos en una respuesta.');
+          throw StateError('Se pidieron demasiadas herramientas en una respuesta.');
         }
-        if (store.rootPath == null) {
-          if (requestStorage == null || !await requestStorage!()) {
-            throw StateError(
-                'Creación de archivos cancelada: selecciona una carpeta en Contexto y archivos.');
+
+        if (fileCalls.isNotEmpty) {
+          _setPhase(GenerationPhase.creatingFiles);
+          if (store.rootPath == null) {
+            if (requestStorage == null || !await requestStorage!()) {
+              throw StateError(
+                  'Creación de archivos cancelada: selecciona una carpeta en Contexto y archivos.');
+            }
+          }
+          final seenFiles = <String>{};
+          for (final call in fileCalls) {
+            if (_stopRequested) {
+              break;
+            }
+            if (!seenFiles.add(jsonEncode(call))) {
+              continue;
+            }
+            generated.add(await GeneratedFileService.create(
+                call: call, conversationId: _activeConversationId!));
+          }
+          buffer.clear();
+          if (generated.isNotEmpty) {
+            buffer.write('Archivos creados. Usa Guardar para elegir el destino.');
           }
         }
-        final seen = <String>{};
-        for (final call in calls) {
-          if (_stopRequested) {
-            break;
+
+        final searchBuffer = StringBuffer();
+        if (searchCalls.isNotEmpty && !_stopRequested) {
+          _setPhase(GenerationPhase.responding);
+          final seenSearches = <String>{};
+          for (final call in searchCalls) {
+            if (_stopRequested) {
+              break;
+            }
+            if (call['function'] is! Map ||
+                (call['function']['arguments'] is! Map)) {
+              continue;
+            }
+            final args =
+                Map<String, dynamic>.from(call['function']['arguments'] as Map);
+            final query = (args['query'] as String? ?? '').trim();
+            if (query.isEmpty) {
+              continue;
+            }
+            if (!seenSearches.add(query)) {
+              continue;
+            }
+            final result = await WebSearchService.instance.search(query);
+            searchBuffer.writeln('Búsqueda: $query');
+            searchBuffer.writeln(result);
+            searchBuffer.writeln();
           }
-          if (!seen.add(jsonEncode(call))) {
-            continue;
-          }
-          generated.add(await GeneratedFileService.create(
-              call: call, conversationId: _activeConversationId!));
         }
-        buffer.clear();
-        if (generated.isNotEmpty) {
-          buffer.write('Archivos creados. Usa Guardar para elegir el destino.');
+
+        if (searchBuffer.isNotEmpty && !_stopRequested) {
+          buffer.clear();
+          _setPhase(GenerationPhase.responding);
+          final fileNote = generated.isEmpty
+              ? ''
+              : 'Archivos creados en este turno: '
+                  '${generated.map((file) => file.name).join(', ')}.\\n';
+          final followupMessages = List<OllamaMessage>.from(prepared.messages)
+            ..add(OllamaMessage(
+                role: 'user',
+                content:
+                    '${fileNote}Resultados de búsqueda web:\\n${searchBuffer.toString().trim()}\\n\\n'
+                    'Responde a la pregunta original usando estos resultados. '
+                    'Cita las fuentes con sus URLs cuando sea posible. '
+                    'No inventes información fuera de los resultados.'));
+          final secondDone = Completer<void>();
+          _streamCompleter = secondDone;
+          var secondReceivedDone = false;
+          await _streamSubscription?.cancel();
+          _streamSubscription = _ollamaService
+              .generateChat(
+                model: _selectedModel,
+                messages: followupMessages,
+                temperature: requestTemperature,
+                numPredict: prepared.responseTokens,
+                numCtx: prepared.profile.tokens,
+                think: OllamaConfig.isThinkingModel(_selectedModel) ? false : null,
+                cancellation: _requestCancellation!.future,
+              )
+              .listen((response) {
+                if (response.done) {
+                  secondReceivedDone = true;
+                  doneReason = response.doneReason ?? doneReason;
+                }
+                if (response.message.isEmpty || _stopRequested) {
+                  return;
+                }
+                _setPhase(GenerationPhase.responding);
+                buffer.write(response.message);
+                final partial = Message(
+                    text: buffer.toString(),
+                    isUser: false,
+                    timestamp: DateTime.now(),
+                    model: _selectedModel);
+                if (streamingIndex == null) {
+                  streamingIndex = _messages.length;
+                  _messages.add(partial);
+                } else {
+                  _messages[streamingIndex!] = partial;
+                }
+                if (buffer.length - notifiedLength >= 24) {
+                  notifiedLength = buffer.length;
+                  _notifyMessages();
+                }
+              }, onError: (Object error, StackTrace stack) {
+                if (!secondDone.isCompleted) {
+                  secondDone.completeError(error, stack);
+                }
+              }, onDone: () {
+                if (!secondDone.isCompleted) {
+                  secondDone.complete();
+                }
+              }, cancelOnError: true);
+          await secondDone.future;
+          if (!_stopRequested && !secondReceivedDone) {
+            throw const HttpException(
+                'La respuesta se interrumpió antes de terminar.');
+          }
         }
       }
       if (buffer.isEmpty && generated.isEmpty && !_stopRequested) {
@@ -1213,13 +1389,17 @@ class ChatServiceOllama with ChangeNotifier {
         'Eres LightChat, un asistente útil y directo. Responde siempre en '
         '$_userLanguage.';
     if (!hasDocumentContext) return prompt;
-    return '$prompt Cuando el usuario adjunta documentos, responde únicamente '
-        'con la información del texto extraído, cita el nombre del archivo del '
-        'que sale cada dato y di claramente que no aparece en el texto adjunto '
-        'si no encuentras la respuesta. Si el texto lleva una marca de recorte, '
-        'indica que solo has recibido una parte del documento. No inventes '
-        'cifras ni filas. Los fragmentos recuperados no son una lectura exhaustiva: '
-        'no calcules sumas ni recuentos globales si la cobertura es parcial.';
+    return '$prompt Cuando el usuario adjunta documentos, basa la respuesta en '
+        'el texto extraído, cita el nombre del archivo del que sale cada dato y '
+        'di claramente que no aparece en el texto adjunto si no encuentras la '
+        'respuesta. Si el texto lleva una marca de recorte, indica que solo has '
+        'recibido una parte del documento. No inventes cifras ni filas. Los '
+        'fragmentos recuperados no son una lectura exhaustiva: ten cuidado al '
+        'calcular sumas o recuentos globales sobre datos parciales y prefiere '
+        'indicar el rango de lo mostrado. Si el texto incluye un bloque '
+        '"Cálculo local automático", usa esos totales exactos y no los recalcules. '
+        'Sigue además las instrucciones del usuario (resumir, traducir, '
+        'reformatear, etc.) sin limitarte a copiar el texto.';
   }
 
   String _imageMimeType(String path) {
@@ -1237,7 +1417,9 @@ class ChatServiceOllama with ChangeNotifier {
     if (_isLoading) {
       return;
     }
-    if (_availableModels.contains(model)) {
+    final isCloud = ApiConfig.isApiModel(model) &&
+        ApiKeyStore.instance.selectableModelIds().contains(model);
+    if (isCloud || _availableModels.contains(model)) {
       _selectedModel = model;
       unawaited(_refreshSelectedProfile());
       ContextService.savePreferredModel(model);
@@ -1305,6 +1487,7 @@ class ChatServiceOllama with ChangeNotifier {
       done.complete();
     }
     _ollamaService.removeListener(_onOllamaServiceChanged);
+    ApiKeyStore.instance.removeListener(_onApiKeysChanged);
     _streamSubscription?.cancel();
     ContextService.cancelPendingSave();
     ConversationService.cancelPendingSaves();

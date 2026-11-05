@@ -1,17 +1,17 @@
 # LightChat
 
-Aplicación de chat ligero y privado para LLMs locales ejecutados con [Ollama](https://ollama.com). Todo corre en tu máquina: sin nube, sin cuentas, sin credenciales.
-
+Aplicación de chat ligero y privado para LLMs locales ejecutados con [Ollama](https://ollama.com). Por defecto todo corre en tu máquina. Opcionalmente puedes usar proveedores de API cloud (17 proveedores) con tus propias claves, guardadas solo en tu perfil local.
 ## Características
 
 - **Catálogo dinámico de modelos**: Descarga modelos directamente desde el registry de Ollama, siempre actualizado
-- **Local y privado**: Todo el procesamiento ocurre en tu máquina (API de Ollama en `localhost:11434`)
-- **Soporte multimodal**: Chatea con imágenes usando modelos de visión
+- **Local y privado por defecto**: Todo el procesamiento ocurre en tu máquina (API de Ollama en `localhost:11434`)
+- **APIs cloud opcionales**: 17 proveedores (Groq, Mistral, DeepSeek, OpenAI, Anthropic, Gemini, Perplexity, etc.) con clave propia
+- **Búsqueda web normal**: los modelos con soporte de herramientas pueden buscar en internet (sin dark net ni URLs arbitrarias)
+- **Soporte multimodal**: Chatea con imágenes usando modelos con visión
 - **Gestión de modelos**: Descarga, elimina y controla modelos instalados desde la app
 - **Multiplataforma**: Windows, macOS y Linux
 - **Respuestas en streaming**: Experiencia de chat en tiempo real
 - **Bajo consumo de recursos**: Optimizado para eficiencia
-
 ## Requisitos
 
 - [Ollama](https://ollama.com) instalado y ejecutándose
@@ -50,6 +50,9 @@ ollama serve
 
 Luego lanza LightChat y descarga tu primer modelo desde el catálogo.
 
+### Búsqueda web y herramientas
+
+La búsqueda web normal solo está disponible con modelos que admitan herramientas (por ejemplo `qwen2.5:7b`). Modelos sin esa capacidad responden solo con su conocimiento entrenado. La búsqueda no accede a la dark net ni a URLs arbitrarias. Si no hay conexión a internet, la app muestra el error real.
 ## Uso
 
 1. Abre LightChat y ve a **Gestión de Ollama → Catálogo**

@@ -7,7 +7,7 @@
 
 ## 1. Overview (¿Qué es este proyecto?)
 
-LightChat es una **aplicación de escritorio hecha en Flutter** con un chat ligero y privado para **LLMs locales ejecutados con [Ollama](https://ollama.com)**. Todo corre en la máquina del usuario (API de Ollama en `http://localhost:11434`): sin nube, sin cuentas, sin credenciales.
+LightChat es una **aplicación de escritorio hecha en Flutter** con un chat ligero y privado para **LLMs locales ejecutados con [Ollama](https://ollama.com)**, con **proveedores de API cloud opcionales**. Local-first: el servidor por defecto es Ollama en `http://localhost:11434` en la máquina del usuario. Las APIs cloud son una opción explícita del usuario (pestaña «APIs») y solo entonces sale tráfico a internet.
 
 - **Stack:** Flutter 3.47.8 stable (Dart 3.13.7) · Dart SDK `>=3.0.0 <4.0.0` · estado con `provider` · HTTP con `http` (streaming) · archivos con `desktop_drop` + `file_selector` · Markdown con `flutter_markdown_plus`
 - **Plataformas:** Windows (principal; ventana maximizada vía `window_manager`), macOS y Linux. `android/`, `ios/`, `web/` existen por plantilla, no son foco.
@@ -21,7 +21,7 @@ Ejecutar siempre desde la raíz del repo (`lightchat/`):
 ```bash
 flutter pub get        # dependencias (obligatorio en entorno limpio)
 flutter analyze        # lints — línea base actual: 0 incidencias (~40 s)
-flutter test           # 144 pruebas + 1 opt-in live (ver §7)
+flutter test           # 163 pruebas + 2 opt-in live (ver §7)
 flutter run            # desarrollo con hot-restart
 flutter build windows  # release Windows (también: macos | linux)
 ```
@@ -46,13 +46,16 @@ Capas: **`screens/ → services/ → API de Ollama`**, con modelos de datos en `
 lib/
 ├── main.dart                    # entrada: MyApp (línea 34), MultiProvider, temas, ventana Windows
 ├── config/
-│   └── vllm_config.dart         # clase OllamaConfig (¡config ACTIVA!) + typedef VllmConfig = OllamaConfig
+│   ├── vllm_config.dart         # clase OllamaConfig (¡config ACTIVA!) + typedef VllmConfig = OllamaConfig
+│   └── api_config.dart          # catálogo de 17 proveedores cloud + adaptadores + ids `api:<prov>/<modelo>`
 ├── models/                      # local_model, message, document_attachment, conversation
 ├── screens/
 │   ├── chat_screen.dart         # pantalla principal de chat (home)
-│   └── ollama_manager_screen.dart   # gestor de modelos/estado Ollama
+│   └── ollama_manager_screen.dart   # gestor: Catálogo · Instalados · Ajustes · Registros · APIs
 ├── services/                    # lógica de negocio y transporte HTTP
 │   ├── ollama_service.dart          # cliente API Ollama (singleton .instance) ← servicio principal
+│   ├── api_service.dart             # cliente cloud: adaptadores openai / anthropic / gemini / ai-horde
+│   ├── api_key_store.dart           # claves y modelos en SharedPreferences + importador de APIS.txt
 │   ├── chat_service_ollama.dart     # orquestación del chat con streaming, parada, regenerar/editar y conversaciones
 │   ├── conversation_service.dart    # índice y mensajes de cada conversación en SharedPreferences
 │   ├── context_service.dart         # migración del historial antiguo + detección de 8 idiomas
@@ -62,13 +65,14 @@ lib/
 │   └── theme_service.dart           # tema claro/oscuro
 └── widgets/                     # chat_input, message_bubble, assistant_markdown,
                                  # conversation_sidebar, document_text_dialog, model_*,
-                                 # ollama_status_widget, capsule_icon, model_capability_icons…
+                                 # ollama_status_widget, capsule_icon, model_capability_icons,
+                                 # api_providers_tab, api_provider_dialog…
 ```
 
-**Flujo de datos (regla):** `Widget → Service (vía Provider) → HTTP a Ollama (streaming NDJSON) → estado → UI`.
+**Flujo de datos (regla):** `Widget → Service (vía Provider) → HTTP (Ollama NDJSON o proveedor cloud SSE) → estado → UI`.
 Los widgets **no** hacen HTTP directo; los services **no** dibujan UI.
 
-**Estado y providers registrados en `MyApp`** (main.dart): `ThemeService`, `ChatServiceOllama`, `OllamaService.instance`, `ModelCatalogService`. Patrón: singletons `XxxService.instance` + `ChangeNotifierProvider`.
+**Estado y providers registrados en `MyApp`** (main.dart): `ThemeService`, `ChatServiceOllama`, `OllamaService.instance`, `ModelCatalogService`, `ApiKeyStore.instance`. Patrón: singletons `XxxService.instance` + `ChangeNotifierProvider`.
 
 ## 4. Configuration & State (Dónde se guarda qué)
 
@@ -96,6 +100,8 @@ Los widgets **no** hacen HTTP directo; los services **no** dibujan UI.
 | Detección de idioma / historial / contexto | `lib/services/context_service.dart` (`detectLanguage`, 8 idiomas) |
 | Tema claro/oscuro | `lib/services/theme_service.dart` |
 | Indicador de conexión/estado | `lib/widgets/ollama_status_widget.dart` |
+| **Proveedores cloud: alta, importar APIS.txt, probar clave, borrar** | `lib/widgets/api_providers_tab.dart` (pestaña «APIs»), `lib/widgets/api_provider_dialog.dart`, `lib/services/api_key_store.dart`, `lib/services/api_service.dart` |
+| Modelo cloud en el selector del chat | `lib/widgets/model_selector.dart` (sección «APIs cloud»), `ChatServiceOllama.selectModel` / `canGenerate` / `canSend` |
 | Instalador y empaquetado Windows | `installer/`, `build_installer.ps1` |
 
 ## 6. Code conventions (Convenciones de código)
@@ -110,7 +116,15 @@ Los widgets **no** hacen HTTP directo; los services **no** dibujan UI.
 
 ## 7. Testing & Verification (Pruebas y verificación mínima)
 
-**Estado actual (2026-10-29):** 144 pruebas pasan y una prueba real de Ollama es opt-in: chat/streaming, cancelación/timeouts/fin/parciales, capacidades, fuentes y rutas legacy, borradores/reinicio/concurrencia, cálculo tabular, exportación, contexto, idioma, temas y UI. `test/widget_test.dart` prueba la pantalla real. La evidencia live actual se guarda fuera de Git en `.dart_tool/live-evidence-20261029`.
+**Estado actual (2026-11-03):** 163 pruebas pasan y dos pruebas reales son opt-in: la de Ollama (`live_documents_test.dart`) y la de un proveedor cloud (`live_api_test.dart`), ambas con `--dart-define=LIGHTCHAT_LIVE=true`. La suite cubre chat/streaming, cancelación/timeouts/fin/parciales, capacidades, fuentes y rutas legacy, borradores/reinicio/concurrencia, cálculo tabular, exportación, contexto, idioma, temas, UI, y ahora el parser de `APIS.txt`, el almacén de claves, los cuatro adaptadores cloud y la pestaña APIs. `test/widget_test.dart` prueba la pantalla real. La evidencia live se guarda fuera de Git en `.dart_tool/live-evidence-*`.
+
+**Prueba live de API cloud (real, no simulada):**
+
+```powershell
+flutter test --no-pub --dart-define=LIGHTCHAT_LIVE=true test/live_api_test.dart
+# proveedor/modelo alternativos (los del APIS.txt del Escritorio):
+#   $env:LIGHTCHAT_LIVE_API='mistral'; $env:LIGHTCHAT_LIVE_MODEL='ministral-8b-latest'
+```
 
 Checklist de verificación antes de dar un cambio por terminado:
 
@@ -127,8 +141,9 @@ Prioridad de cobertura futura (hoy 0 tests reales): lógica pura en `context_ser
 |---|---|---|---|
 | **Ollama** | inferencia local | `http://localhost:11434` | `GET /api/tags`, `POST /api/chat`, `POST /api/generate`, `POST /api/pull`, `DELETE /api/delete` |
 | Catálogo online de modelos | lista de modelos a descargar | HTTP en `model_catalog_service.dart` | caché en prefs con expiración (`modelCacheExpiry`) |
+| **Proveedores cloud (opcional)** | chat alternativo a Ollama | 17 endpoints en `lib/config/api_config.dart` (`api.deepseek.com`, `api.groq.com`, `generativelanguage.googleapis.com`, `api.anthropic.com`, `openrouter.ai`, `aihorde.net`…) | solo si el usuario da de alta una clave en la pestaña «APIs»; `ApiService` añade `/chat/completions`, `/messages`, `:streamGenerateContent` o la cola de AI Horde |
 
-Sin variables de entorno ni credenciales. La app funciona 100 % offline salvo el catálogo online y `ollama pull`.
+**Credenciales:** las claves de API las introduce el usuario (botón «Importar APIS.txt» o alta manual) y se guardan **en claro en SharedPreferences del perfil local** — decisión explícita del usuario, sin dependencias nuevas. **Nunca** se escriben en el código fuente ni en git. No hay variables de entorno. Sin claves dadas de alta, la app sigue funcionando 100 % offline salvo el catálogo online y `ollama pull`.
 
 ## 9. Git conventions (Convenciones de git)
 

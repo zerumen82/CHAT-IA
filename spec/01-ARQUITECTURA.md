@@ -65,3 +65,31 @@ El panel muestra cobertura, exclusiones, copia y exportación. SpreadsheetConfig
 centraliza límites. XLS BIFF8 se mantiene para lectura documental, pero el cálculo
 exige XLSX/CSV porque el lector no distingue fórmulas de cachés.
 
+# Backend cloud opcional — 2026-11-03
+
+Capa añadida **sin romper el flujo Ollama**: `Widget → Service → HTTP (Ollama
+NDJSON o proveedor cloud SSE) → estado → UI`.
+
+- `config/api_config.dart` — catálogo inmutable de 17 proveedores (id, nombre,
+  baseUrl, adaptador) y utilidades sobre ids `api:<proveedor>/<modelo>`. **Sin
+  claves**: solo identidad y endpoint. Alias tolerantes a las erratas del
+  `APIS.txt` (`OPENMROUTER`, `ANTROPIC`, `hugginfac`, `minmax`…).
+- `services/api_key_store.dart` — singleton `ChangeNotifier` con las
+  claves/modelos en SharedPreferences más el parser del `APIS.txt`. Registrado
+  como provider en `main.dart`.
+- `services/api_service.dart` — 4 adaptadores con **el mismo contrato** que
+  `OllamaService.generateChat` (eventos `OllamaChatResponse`, `done` final,
+  cancelación, `connectionTimeout`/`inactivityTimeout`): `openai-compatible`,
+  `anthropic`, `gemini` y `ai-horde` (cola asíncrona, **sin streaming**).
+  Por eso `ChatServiceOllama` solo cambia el origen del `Stream`, no su
+  tratamiento: parada, regenerar, error visible y EOF sin `done` se comportan
+  igual.
+- Selección: `ChatServiceOllama.canGenerate` (¿se puede usar el modelo actual?)
+  y `canSend` (habilita el envío). Ollama conserva `isConnected`; el selector
+  de modelos añade la sección «APIs cloud».
+- Perfil de contexto: `ContextProfileService.forModel` devuelve un perfil
+  propio para ids `api:` (65.536 declarados, capacidades **desconocidas**:
+  `capabilitiesKnown=false`, sin deducir visión ni herramientas del nombre).
+- Claves: solo en `ApiKeyStore`; ninguna en el código ni en git. La ruta del
+  `APIS.txt` se elige con el selector nativo, nunca se teclea ni se fija.
+

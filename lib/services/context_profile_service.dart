@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/api_config.dart';
 import '../config/context_config.dart';
 import 'ollama_service.dart';
 
@@ -29,6 +30,20 @@ class ContextProfileService {
   final Map<String, Map<String, dynamic>> _metadata = {};
 
   Future<ModelContextProfile> forModel(String model) async {
+    // Modelo cloud: no existe metadata de Ollama y tampoco se consulta el
+    // servidor local. El contexto no lo limita la VRAM, así que se declara un
+    // valor amplio; las capacidades (visión/herramientas) se desconocen para
+    // un modelo remoto arbitrario y NO se deducen del nombre (AGENTS.md §12).
+    if (ApiConfig.isApiModel(model)) {
+      return const ModelContextProfile(
+        nativeTokens: ApiConfig.cloudContextTokens,
+        tokens: ApiConfig.cloudContextTokens,
+        supportsTools: false,
+        metadataKnown: false,
+        supportsVision: false,
+        capabilitiesKnown: false,
+      );
+    }
     var metadata = _metadata[model];
     if (metadata == null) {
       metadata = await OllamaService.instance.showModel(model);

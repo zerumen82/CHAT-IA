@@ -763,24 +763,34 @@ class OllamaService extends ChangeNotifier {
       final firstPage = await _fetchCatalogPage(1);
       final pageCount = _parseCatalogPageCount(firstPage.body);
       final results = parseAvailableModels(firstPage.body);
-      if (pageCount == null && results.length >= _catalogPageSize) {
-        throw const FormatException(
-          'No se pudo determinar cuántas páginas tiene el catálogo de Ollama.',
-        );
-      }
-      final lastPage = pageCount ?? 1;
 
-      for (var firstPageNumber = 2;
-          firstPageNumber <= lastPage;
-          firstPageNumber += 4) {
-        final requests = <Future<http.Response>>[];
-        for (var page = firstPageNumber;
-            page <= lastPage && page < firstPageNumber + 4;
-            page++) {
-          requests.add(_fetchCatalogPage(page));
+      if (pageCount != null) {
+        final lastPage = pageCount;
+        for (var firstPageNumber = 2;
+            firstPageNumber <= lastPage;
+            firstPageNumber += 4) {
+          final requests = <Future<http.Response>>[];
+          for (var page = firstPageNumber;
+              page <= lastPage && page < firstPageNumber + 4;
+              page++) {
+            requests.add(_fetchCatalogPage(page));
+          }
+          for (final response in await Future.wait(requests)) {
+            results.addAll(parseAvailableModels(response.body));
+          }
         }
-        for (final response in await Future.wait(requests)) {
-          results.addAll(parseAvailableModels(response.body));
+      } else {
+        // El sitio ya no publica el total en el placeholder: se cargan
+        // páginas hasta que una venga vacía, con un límite de seguridad.
+        var page = 2;
+        while (page <= _catalogMaxPages) {
+          final response = await _fetchCatalogPage(page);
+          final pageResults = parseAvailableModels(response.body);
+          if (pageResults.isEmpty) {
+            break;
+          }
+          results.addAll(pageResults);
+          page++;
         }
       }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../config/api_config.dart';
 import '../config/vllm_config.dart';
 import '../services/chat_service_ollama.dart';
 import '../services/context_profile_service.dart';
@@ -13,9 +14,12 @@ class ModelSelector extends StatelessWidget {
     return Consumer<ChatServiceOllama>(
       builder: (context, chatService, _) {
         final models = chatService.availableModels;
+        final cloudModels = chatService.availableApiModels;
         final colorScheme = Theme.of(context).colorScheme;
+        final selectedLabel =
+            ApiConfig.displayNameFor(chatService.selectedModel);
 
-        if (models.isEmpty) {
+        if (models.isEmpty && cloudModels.isEmpty) {
           return PopupMenuButton<String>(
             icon: Icon(
               Icons.cloud_off,
@@ -76,7 +80,7 @@ class ModelSelector extends StatelessWidget {
           enabled: !chatService.isLoading,
           tooltip:
               '${chatService.isLoading ? 'Detén la respuesta para cambiar de modelo. ' : ''}'
-              'Modelo: ${chatService.selectedModel.isNotEmpty ? chatService.selectedModel : "ninguno"}'
+              'Modelo: ${chatService.selectedModel.isNotEmpty ? selectedLabel : "ninguno"}'
               '${selectedIsUncensored ? ' · Sin censura' : ''}',
           child: Container(
             width: maxWidth,
@@ -96,7 +100,7 @@ class ModelSelector extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    chatService.selectedModel,
+                    selectedLabel,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -205,6 +209,20 @@ class ModelSelector extends StatelessWidget {
                 ),
               );
             }),
+            if (cloudModels.isNotEmpty) ...[
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(
+                enabled: false,
+                child: Row(
+                  children: [
+                    Icon(Icons.cloud, size: 16),
+                    SizedBox(width: 8),
+                    Text('APIs cloud'),
+                  ],
+                ),
+              ),
+              ..._groupedCloudItems(chatService, cloudModels, colorScheme),
+            ],
             const PopupMenuDivider(),
             PopupMenuItem<String>(
               value: '__reload__',
@@ -220,6 +238,87 @@ class ModelSelector extends StatelessWidget {
         );
       },
     );
+  }
+
+  List<PopupMenuItem<String>> _groupedCloudItems(
+      ChatServiceOllama chat, List<String> cloudModels, ColorScheme cs) {
+    final groups = <String, List<String>>{};
+    for (final m in cloudModels) {
+      final parsed = ApiConfig.parseApiModelId(m);
+      final id = parsed?.providerId ?? 'otro';
+      groups.putIfAbsent(id, () => <String>[]);
+      groups[id]!.add(m);
+    }
+    final items = <PopupMenuItem<String>>[];
+    for (final entry in groups.entries.toList()..sort((a, b) => a.key.compareTo(b.key))) {
+      final providerName = ApiConfig.byId(entry.key)?.displayName ?? entry.key;
+      final providerColor = cs.primary; // podría extenderse a colores por proveedor
+      // Encabezado del grupo con fondo sutil y separador arriba
+      items.add(PopupMenuItem<String>(
+        enabled: false,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          margin: const EdgeInsets.only(top: 4, bottom: 2),
+          decoration: BoxDecoration(
+            color: cs.secondaryContainer.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.cloud_queue, size: 18, color: providerColor),
+              const SizedBox(width: 8),
+              Text(
+                providerName.toUpperCase(),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 11,
+                  letterSpacing: 0.5,
+                  color: cs.onSecondaryContainer,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ));
+      for (final model in entry.value) {
+        final isSel = model == chat.selectedModel;
+        items.add(PopupMenuItem<String>(
+          value: model,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Icon(
+                  isSel ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                  size: 18,
+                  color: isSel ? cs.primary : cs.outline,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    ApiConfig.displayNameFor(model).split(' · ').last,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                      fontSize: 13,
+                      color: isSel ? cs.primary : cs.onSurface,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ));
+      }
+      // Separador visual entre proveedores
+      items.add(PopupMenuItem<String>(
+        enabled: false,
+        child: SizedBox(height: 4),
+      ));
+    }
+    return items;
   }
 
   String _capabilities(ModelContextProfile? profile) {

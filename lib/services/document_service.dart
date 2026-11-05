@@ -15,7 +15,7 @@ import '../models/document_attachment.dart';
 import '../config/document_config.dart';
 import '../config/spreadsheet_config.dart';
 import '../models/spreadsheet_data.dart';
-
+import 'spreadsheet_analysis_service.dart';
 /// Extrae el texto de documentos (PDF, XLSX, XLS, CSV y texto plano) para
 /// enviarlo como contexto al modelo local.
 ///
@@ -129,7 +129,7 @@ class DocumentService {
       throw const FormatException(
           'El archivo cambió de tamaño y supera el límite.');
     }
-    final extension = extensionOf(path);
+    final extension = DocumentService.extensionOf(path);
     final sheets = <SpreadsheetSheet>[];
     final warnings = <String>[];
     var totalCells = 0;
@@ -140,7 +140,6 @@ class DocumentService {
             'Demasiadas celdas: no se calcularán totales sobre un libro incompleto.');
       }
     }
-
     if (extension == 'csv' || extension == 'tsv') {
       if (!{',', ';', '\t'}.contains(csvDelimiter)) {
         throw const FormatException('Separador de tabla no admitido.');
@@ -160,9 +159,7 @@ class DocumentService {
         }));
       }
       sheets.add(SpreadsheetSheet('Tabla', structured));
-    } else if (extension == 'xlsx' ||
-        extension == 'xlsm' ||
-        (extension == 'xls' && _looksLikeZip(bytes))) {
+    } else if (_looksLikeZip(bytes)) {
       final entries = _zipEntries(bytes);
       final workbookXml = _zipText(entries, 'xl/workbook.xml');
       if (workbookXml == null) {
@@ -331,7 +328,7 @@ class DocumentService {
     String? displayName,
   }) async {
     final name = displayName ?? path.split(RegExp(r'[/\\]')).last;
-    final kind = kindOf(name);
+      final kind = DocumentService.kindOf(name);
 
     DocumentAttachment failure(String message) => DocumentAttachment(
           path: path,
@@ -341,8 +338,8 @@ class DocumentService {
           error: message,
         );
 
-    if (!isSupportedDocument(name)) {
-      return failure('Formato no admitido. Usa $supportedFormatsLabel.');
+    if (!DocumentService.isSupportedDocument(name)) {
+      return failure('Formato no admitido. Usa ${DocumentService.supportedFormatsLabel}.');
     }
 
     try {
@@ -352,15 +349,16 @@ class DocumentService {
       }
 
       final sizeBytes = await file.length();
-      if (sizeBytes > maxFileBytes) {
+      if (sizeBytes > DocumentService.maxFileBytes) {
         return failure('El archivo supera el límite de 25 MB.');
       }
 
       final bytes = await file.readAsBytes();
-      final extension = extensionOf(name);
+      final extension = DocumentService.extensionOf(name);
 
       String text;
       String? completeText;
+      var csvDelimiter = ',';
       // Caracteres del documento completo, antes de repartir el presupuesto
       // entre sus hojas.
       int? fullChars;
@@ -372,7 +370,7 @@ class DocumentService {
         case 'xlsm':
           {
             final sheets = _readXlsxSheets(bytes);
-            text = _renderSheetTexts(sheets, maxCharsPerDocument);
+            text = _renderSheetTexts(sheets, DocumentService.maxCharsPerDocument);
             completeText =
                 _renderSheetTexts(sheets, DocumentConfig.maxExtractedChars);
             fullChars = _sheetChars(sheets);
@@ -385,7 +383,7 @@ class DocumentService {
             final sheets = _looksLikeZip(bytes)
                 ? _readXlsxSheets(bytes)
                 : _readXlsSheets(bytes);
-            text = _renderSheetTexts(sheets, maxCharsPerDocument);
+            text = _renderSheetTexts(sheets, DocumentService.maxCharsPerDocument);
             completeText =
                 _renderSheetTexts(sheets, DocumentConfig.maxExtractedChars);
             fullChars = _sheetChars(sheets);
@@ -408,6 +406,7 @@ class DocumentService {
           text = _formatDelimited(_decodeText(bytes), ',');
           break;
         case 'tsv':
+          csvDelimiter = '\t';
           text = _formatDelimited(_decodeText(bytes), '\t');
           break;
         default:
@@ -415,6 +414,15 @@ class DocumentService {
       }
 
       text = _normalize(text);
+      if (_isSpreadsheetExtension(extension)) {
+        final summary = await _spreadsheetNumericSummary(path, csvDelimiter);
+        if (summary.isNotEmpty) {
+          text = _normalize('$text\n\n$summary');
+          if (completeText != null) {
+            completeText = _normalize('$completeText\n\n$summary');
+          }
+        }
+      }
       if (text.isEmpty) {
         return DocumentAttachment(
           path: path,
@@ -432,23 +440,24 @@ class DocumentService {
       final fullText = _normalize(completeText ?? text);
       final originalChars =
           math.max(fullChars ?? fullText.length, fullText.length);
-      final oversized = text.length > maxCharsPerDocument;
+      final oversized = text.length > DocumentService.maxCharsPerDocument;
       return DocumentAttachment(
         path: path,
         name: name,
         kind: kind,
         sizeBytes: sizeBytes,
-        text: oversized ? truncateAtLineBreak(text, maxCharsPerDocument) : text,
+        text: oversized
+            ? truncateAtLineBreak(text, DocumentService.maxCharsPerDocument)
+            : text,
         originalChars: originalChars,
         truncated: oversized || originalChars > text.length,
         extractedText: fullText.length > DocumentConfig.maxExtractedChars
             ? truncateAtLineBreak(fullText, DocumentConfig.maxExtractedChars)
             : fullText,
-        extractionTruncated:
-            fullText.length > DocumentConfig.maxExtractedChars ||
-                fullText.contains('[Hoja recortada:') ||
-                fullText.contains('[Tabla recortada:') ||
-                fullText.contains('[Columnas omitidas:'),
+        extractionTruncated: fullText.length > DocumentConfig.maxExtractedChars ||
+            fullText.contains('[Hoja recortada:') ||
+            fullText.contains('[Tabla recortada:') ||
+            fullText.contains('[Columnas omitidas:'),
       );
     } catch (error) {
       return DocumentAttachment(
@@ -982,19 +991,19 @@ class DocumentService {
 
     final buffer = StringBuffer();
     for (var index = 0; index < rows.length; index++) {
-      if (index >= maxRowsPerSheet) {
-        buffer.writeln('[Tabla recortada: máximo de $maxRowsPerSheet filas]');
+      if (index >= DocumentConfig.maxRowsPerSheet) {
+        buffer.writeln('[Tabla recortada: máximo de ${DocumentConfig.maxRowsPerSheet} filas]');
         break;
       }
       final cells = rows[index]
           .map((cell) => cell.trim())
-          .take(maxColumnsPerRow)
+          .take(DocumentConfig.maxColumnsPerRow)
           .toList();
       if (cells.every((cell) => cell.isEmpty)) continue;
       buffer.writeln('Fila ${index + 1}: ${cells.join(' | ')}');
-      if (rows[index].length > maxColumnsPerRow) {
+      if (rows[index].length > DocumentConfig.maxColumnsPerRow) {
         buffer.writeln(
-            '[Columnas omitidas: ${rows[index].length - maxColumnsPerRow} en la fila ${index + 1}]');
+            '[Columnas omitidas: ${rows[index].length - DocumentConfig.maxColumnsPerRow} en la fila ${index + 1}]');
       }
     }
     return buffer.toString();
@@ -1135,44 +1144,44 @@ class DocumentService {
 
       for (var index = 0; index < reader.sheetCount; index++) {
         final sheet = reader.sheet(index);
-        final rowsByIndex = <int, Map<int, String>>{};
-        for (final cell in sheet.cells) {
-          final value = _xlsCellText(cell.value);
-          if (value.isEmpty) {
-            continue;
-          }
-          rowsByIndex.putIfAbsent(cell.row, () => {})[cell.col] = value;
-        }
-        if (rowsByIndex.isEmpty) {
+      final rowsByIndex = <int, Map<int, String>>{};
+      for (final cell in sheet.cells) {
+        final value = _xlsCellText(cell.value);
+        if (value.isEmpty) {
           continue;
         }
+        rowsByIndex.putIfAbsent(cell.row, () => {})[cell.col] = value;
+      }
+      if (rowsByIndex.isEmpty) {
+        continue;
+      }
 
-        final rowNumbers = rowsByIndex.keys.toList()..sort();
-        final rows = <String>[];
-        for (final rowNumber in rowNumbers) {
-          if (rows.length >= maxRowsPerSheet) {
-            rows.add('[Hoja recortada: máximo de $maxRowsPerSheet filas]');
-            break;
-          }
-
-          final cells = rowsByIndex[rowNumber]!;
-          final maxColumn = math.min(
-            cells.keys.reduce(math.max),
-            maxColumnsPerRow - 1,
-          );
-          final values = List<String>.generate(
-            maxColumn + 1,
-            (column) => cells[column] ?? '',
-          );
-          if (values.every((value) => value.isEmpty)) {
-            continue;
-          }
-          rows.add('Fila ${rowNumber + 1}: ${values.join(' | ')}');
-          if (cells.keys.any((column) => column >= maxColumnsPerRow)) {
-            rows.add(
-                '[Columnas omitidas: a partir de la columna ${maxColumnsPerRow + 1} en la fila ${rowNumber + 1}]');
-          }
+      final rowNumbers = rowsByIndex.keys.toList()..sort();
+      final rows = <String>[];
+      for (final rowNumber in rowNumbers) {
+        if (rows.length >= DocumentConfig.maxRowsPerSheet) {
+          rows.add('[Hoja recortada: máximo de ${DocumentConfig.maxRowsPerSheet} filas]');
+          break;
         }
+
+        final cells = rowsByIndex[rowNumber]!;
+        final maxColumn = math.min(
+          cells.keys.reduce(math.max),
+          DocumentConfig.maxColumnsPerRow - 1,
+        );
+        final values = List<String>.generate(
+          maxColumn + 1,
+          (column) => cells[column] ?? '',
+        );
+        if (values.every((value) => value.isEmpty)) {
+          continue;
+        }
+        rows.add('Fila ${rowNumber + 1}: ${values.join(' | ')}');
+        if (cells.keys.any((column) => column >= DocumentConfig.maxColumnsPerRow)) {
+          rows.add(
+              '[Columnas omitidas: a partir de la columna ${DocumentConfig.maxColumnsPerRow + 1} en la fila ${rowNumber + 1}]');
+        }
+      }
 
         if (rows.isNotEmpty) {
           sheets.add(_SheetText(sheet.name, rows));
@@ -1229,6 +1238,53 @@ class DocumentService {
   /// Vuelca las hojas repartiendo [maxChars] entre todas, de modo que ninguna
   /// desaparezca: cada una aporta su cabecera, sus primeras filas y una marca
   /// con cuántas quedaron fuera.
+  static bool _isSpreadsheetExtension(String extension) =>
+      extension == 'xlsx' ||
+      extension == 'xlsm' ||
+      extension == 'xls' ||
+      extension == 'csv' ||
+      extension == 'tsv';
+
+  static Future<String> _spreadsheetNumericSummary(String path, String csvDelimiter) async {
+    try {
+      final data = await _readSpreadsheetInWorker(path, csvDelimiter);
+      final sheetNames = data.sheets.map((s) => s.name).toSet();
+      if (sheetNames.isEmpty) return '';
+      final maxColumns = data.sheets.fold<int>(
+          0, (m, s) => math.max<int>(m, s.columns.length));
+      if (maxColumns == 0) return '';
+      final lines = <String>[];
+      for (var column = 0; column < maxColumns; column++) {
+        try {
+          final analysis = SpreadsheetAnalysisService.calculateSync(
+            data: data,
+            sheetNames: sheetNames,
+            valueColumn: column,
+            firstRowIsHeader: true,
+          );
+          final header = _spreadsheetColumnName(data, column);
+          lines.add('- $header: ${analysis.total} (${analysis.numbers} valores)');
+        } catch (_) {
+          // Columna sin valores numéricos admitidos.
+        }
+      }
+      if (lines.isEmpty) return '';
+      return 'Cálculo local automático (totales exactos por columna numérica):\n${lines.join('\n')}';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static String _spreadsheetColumnName(SpreadsheetData data, int column) {
+    if (data.sheets.isEmpty || data.sheets.first.rows.isEmpty) {
+      return 'Columna ${column + 1}';
+    }
+    final firstRow = data.sheets.first.rows.first;
+    final cell = firstRow.cells[column];
+    final text = cell?.text.trim() ?? '';
+    return text.isEmpty ? 'Columna ${column + 1}' : text;
+  }
+
   static String _renderSheetTexts(List<_SheetText> sheets, int maxChars) {
     if (sheets.isEmpty) {
       return '';
@@ -1427,8 +1483,8 @@ class DocumentService {
     var rowNumber = 0;
 
     for (final row in document.findAllElements('row')) {
-      if (rows.length >= maxRowsPerSheet) {
-        rows.add('[Hoja recortada: máximo de $maxRowsPerSheet filas]');
+      if (rows.length >= DocumentConfig.maxRowsPerSheet) {
+        rows.add('[Hoja recortada: máximo de ${DocumentConfig.maxRowsPerSheet} filas]');
         break;
       }
 
@@ -1451,16 +1507,16 @@ class DocumentService {
 
       final maxColumn = math.min(
         cells.keys.reduce(math.max),
-        maxColumnsPerRow - 1,
+        DocumentConfig.maxColumnsPerRow - 1,
       );
       final values = List<String>.generate(
         maxColumn + 1,
         (index) => cells[index] ?? '',
       );
       rows.add('Fila $rowIndex: ${values.join(' | ')}');
-      if (cells.keys.any((column) => column >= maxColumnsPerRow)) {
+      if (cells.keys.any((column) => column >= DocumentConfig.maxColumnsPerRow)) {
         rows.add(
-            '[Columnas omitidas: a partir de la columna ${maxColumnsPerRow + 1} en la fila $rowIndex]');
+            '[Columnas omitidas: a partir de la columna ${DocumentConfig.maxColumnsPerRow + 1} en la fila $rowIndex]');
       }
     }
 

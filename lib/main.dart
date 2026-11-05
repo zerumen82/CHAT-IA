@@ -6,6 +6,7 @@ import 'screens/chat_screen.dart';
 import 'services/chat_service_ollama.dart';
 import 'services/theme_service.dart';
 import 'services/ollama_service.dart';
+import 'services/api_key_store.dart';
 import 'services/model_catalog_service.dart';
 import 'services/draft_service.dart';
 import 'config/ui_config.dart';
@@ -97,8 +98,17 @@ void main() async {
       fullScreen: false,
     );
     windowManager.waitUntilReadyToShow(windowOptions, () async {
-      // Maximizar la ventana en lugar de usar fullScreen para preservar los controles
+      // Maximizar la ventana en lugar de usar fullScreen para preservar los controles.
+      // El show nativo es asíncrono: si se maximiza sin esperar a que la
+      // ventana sea visible, el maximize se pierde y la app queda en una
+      // ventana pequeña en blanco hasta el primer redimensionado.
       await windowManager.show();
+      for (var attempt = 0; attempt < 20; attempt++) {
+        if (await windowManager.isVisible()) {
+          break;
+        }
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
       await windowManager.maximize();
       await windowManager.focus();
     });
@@ -204,6 +214,8 @@ class MyApp extends StatelessWidget {
         // el árbol (p. ej. en pruebas o al recrear la app).
         ChangeNotifierProvider.value(value: OllamaService.instance),
         ChangeNotifierProvider(create: (_) => ModelCatalogService()),
+        // Claves de los proveedores cloud opcionales (pestaña APIs).
+        ChangeNotifierProvider.value(value: ApiKeyStore.instance),
       ],
       child: Consumer<ThemeService>(builder: (context, themeService, _) {
         return MaterialApp(

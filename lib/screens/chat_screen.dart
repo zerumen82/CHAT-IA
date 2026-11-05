@@ -97,6 +97,10 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) {
         return false;
       }
+      // Si ya tiene carpeta configurada, no preguntar otra vez
+      if (DocumentStoreService.instance.rootPath != null) {
+        return true; // Ya tiene carpeta, continuar normalmente
+      }
       final path = await getDirectoryPath(
           confirmButtonText: 'Usar para documentos de LightChat');
       if (path == null) {
@@ -357,9 +361,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                       })>(
                                     selector: (_, chatService) => (
                                       loading: chatService.isLoading,
-                                      connected: chatService.isConnected &&
-                                          chatService
-                                              .availableModels.isNotEmpty,
+                                      connected: chatService.canSend,
                                       model: chatService.selectedModel,
                                       conversationId:
                                           chatService.activeConversationId,
