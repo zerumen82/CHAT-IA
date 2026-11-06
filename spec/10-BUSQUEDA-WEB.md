@@ -10,8 +10,8 @@ sin ejecución de código ni acceso a URLs arbitrarias.
 - Parámetro `source`: `web` (por defecto, DuckDuckGo Instant Answer API) o
   `tor` (motores .onion vía proxy SOCKS5 local de Tor).
 - Fuente web: DuckDuckGo Instant Answer API (sin API key).
-- Fuente tor: proxy SOCKS5 en 127.0.0.1:9050 (Tor instalado por el usuario);
-  consulta motores .onion (Ahmia, Torch) y devuelve enlaces .onion.
+- Fuente tor: proxy SOCKS5 en 127.0.0.1:9050 o 9150 (Tor o Tor Browser en ejecución);
+  consulta el índice .onion de Ahmia y devuelve enlaces .onion.
 - Sin claves nuevas. Dependencia `socks5_proxy` para el proxy SOCKS5.
 - El modelo puede pedir una o varias búsquedas; la app ejecuta la consulta y
   devuelve resumen/temas relacionados, luego el modelo responde citando fuentes.
@@ -25,4 +25,6 @@ sin ejecución de código ni acceso a URLs arbitrarias.
 ## Notas
 - `source="tor"` requiere Tor en ejecución; si no está disponible, la
   herramienta devuelve error claro.
-- Los enlaces .onion requieren Tor Browser para abrirse.
+- Los enlaces .onion requieren Tor Browser para abrirse. En el chat, pulsar un
+  enlace .onion muestra un aviso con copia al portapapeles y apertura en Tor
+  Browser si está detectado; los enlaces http/https abren el navegador del sistema.
