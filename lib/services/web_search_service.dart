@@ -2,25 +2,107 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 import 'package:html/parser.dart' as html_parser;
-import 'package:socks5_proxy/socks.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart' as io_client;
+import 'package:socks5_proxy/socks.dart' as socks;
+
+/// Portada de Ahmia cargada una sola vez por sesión y reutilizada para
+/// búsquedas posteriores contra el mismo [_ahmiaHost], con caducidad breve.
+class AhmiaCache {
+  AhmiaCache({
+    http.Client? client,
+    Duration ttl = const Duration(minutes: 5),
+  }) : _client = client,
+        _ttl = ttl;
+
+  final http.Client? _client;
+  final Duration _ttl;
+
+  String? _html;
+  DateTime? _fetchedAt;
+  Object? _error;
+
+  bool get has => _html != null;
+
+  String get html {
+    if (_html != null) return _html!;
+    throw StateError(
+        'No hay caché de Ahmia: ${_error != null ? _error! : "nunca descargada"}.');
+  }
+
+  Duration get _age => _fetchedAt != null
+      ? DateTime.now().difference(_fetchedAt!)
+      : Duration.zero;
+
+  bool get _isFresh => _html != null && _age <= _ttl;
+
+  void invalidate() {
+    _html = null;
+    _fetchedAt = null;
+    _error = null;
+  }
+
+  Future<String> getOrFetch(
+    Uri url,
+    Duration timeout,
+    Future<void>? cancellation,
+  ) async {
+    if (_isFresh) return _html!;
+    try {
+      final html = await _fetch(url, timeout, cancellation);
+      _html = html;
+      _fetchedAt = DateTime.now();
+      _error = null;
+      return html;
+    } catch (e) {
+      _error = e.runtimeType.toString();
+      rethrow;
+    }
+  }
+
+  Future<String> _fetch(
+    Uri url,
+    Duration timeout,
+    Future<void>? cancellation,
+  ) async {
+    final client = _client ?? http.Client();
+    try {
+      final responseFuture = cancellation != null
+          ? Future.any<http.Response>([
+                client.get(url).timeout(timeout),
+                cancellation.then<http.Response>(
+                    (_) => throw const WebSearchCancelledException()),
+              ])
+          : client.get(url).timeout(timeout);
+      final response = await responseFuture;
+      if (response.statusCode != 200) {
+        throw StateError(
+            'La portada de Ahmia falló con HTTP ${response.statusCode}.');
+      }
+      return response.body;
+    } finally {
+      if (_client == null) client.close();
+    }
+  }
+}
 
 /// Búsqueda web normal y en la red Tor (deep web) para modelos con herramientas.
 ///
 /// `source=web` usa DuckDuckGo (sin clave). `source=tor` usa un proxy SOCKS5
 /// local de Tor y consulta el índice .onion de Ahmia, devolviendo enlaces
 /// .onion que solo se abren con Tor Browser.
-/// Nunca ejecuta código ni accede a URLs arbitrarias por el modelo.
 class WebSearchService {
-  WebSearchService({http.Client? client}) : _injectedClient = client;
+  WebSearchService({http.Client? client, AhmiaCache? cache})
+      : _client = client,
+        _cache = cache;
 
   static final WebSearchService instance = WebSearchService();
 
-  final http.Client? _injectedClient;
+  final http.Client? _client;
+  final AhmiaCache? _cache;
 
-  http.Client _client() => _injectedClient ?? http.Client();
+  http.Client _createClient() => _client ?? http.Client();
 
   static const Map<String, dynamic> tool = <String, dynamic>{
     'type': 'function',
@@ -29,8 +111,8 @@ class WebSearchService {
       'description':
           'Busca información en internet. source="web" (por defecto) busca en la '
           'web normal (DuckDuckGo). source="tor" busca en la red Tor / deep web '
-          '(índice .onion de Ahmia) y devuelve enlaces .onion. Usar "tor" solo si el '
-          'usuario pide deep web, dark web o Tor. Devuelve resumen y enlaces. '
+          '(índice .onion de Ahmia) y devuelve enlaces .onion. Usar "tor" solo si '
+          'el usuario pide deep web, dark web o Tor. Devuelve resumen y enlaces. '
           'Úsala solo cuando el usuario pida buscar información o verificar datos.',
       'parameters': <String, dynamic>{
         'type': 'object',
@@ -50,21 +132,17 @@ class WebSearchService {
     },
   };
 
-  static List<Map<String, dynamic>> get tools =>
-      <Map<String, dynamic>>[tool];
+  static List<Map<String, dynamic>> get tools => <Map<String, dynamic>>[tool];
 
   static List<Map<String, dynamic>> allChatTools(
           List<Map<String, dynamic>> fileTools) =>
       <Map<String, dynamic>>[...fileTools, tool];
 
-  /// Ejecuta una búsqueda y devuelve texto legible para el modelo.
-  ///
-  /// [cancellation] permite que «Detener» corte la petición en curso: en ese
-  /// caso se lanza [WebSearchCancelledException].
-  Future<String> search(String rawQuery,
-      {String source = 'web',
-      Duration timeout = const Duration(seconds: 15),
-      Future<void>? cancellation}) async {
+  Future<String> search(String rawQuery, {
+    String source = 'web',
+    Duration timeout = const Duration(seconds: 15),
+    Future<void>? cancellation,
+  }) async {
     final query = rawQuery.trim();
     if (query.isEmpty) {
       throw ArgumentError('La consulta de búsqueda no puede estar vacía.');
@@ -75,28 +153,33 @@ class WebSearchService {
 
     final normalizedSource = source.trim().toLowerCase();
     if (normalizedSource == 'tor') {
-      // Ahmia por Tor tarda 4-12 s medidos (portada + resultados).
-      return _searchTor(query,
-          timeout < _minTorTimeout ? _minTorTimeout : timeout, cancellation);
+      return _searchTor(
+          query,
+          timeout < _minTorTimeout ? _minTorTimeout : timeout,
+          cancellation);
     }
     return _searchWeb(query, timeout, cancellation);
   }
 
-  /// Devuelve [request] o falla en cuanto se completa [cancellation].
   static Future<T> _awaitOrCancel<T>(
-      Future<T> request, Future<void>? cancellation) {
-    if (cancellation == null) {
-      return request;
-    }
-    return Future.any<T>(<Future<T>>[
-      request,
-      cancellation.then<T>((_) => throw const WebSearchCancelledException()),
-    ]);
+    Future<T> request,
+    Future<void>? cancellation,
+  ) {
+    if (cancellation == null) return request;
+    return Future.any<T>(
+      <Future<T>>[
+        request,
+        cancellation.then<T>((_) => throw const WebSearchCancelledException()),
+      ],
+    );
   }
 
   Future<String> _searchWeb(
-      String query, Duration timeout, Future<void>? cancellation) async {
-    final client = _client();
+    String query,
+    Duration timeout,
+    Future<void>? cancellation,
+  ) async {
+    final httpClient = _createClient();
     try {
       final uri = Uri.https('api.duckduckgo.com', '/', <String, String>{
         'q': query,
@@ -104,11 +187,10 @@ class WebSearchService {
         'no_html': '1',
         'skip_disambig': '1',
       });
-      final response =
-          await _awaitOrCancel(client.get(uri).timeout(timeout), cancellation);
+      final response = await _awaitOrCancel(
+          httpClient.get(uri).timeout(timeout), cancellation);
       if (response.statusCode != 200) {
-        throw StateError(
-            'La búsqueda web falló con HTTP ${response.statusCode}.');
+        throw StateError('La búsqueda web falló con HTTP ${response.statusCode}.');
       }
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
       if (decoded is! Map<String, dynamic>) {
@@ -120,42 +202,45 @@ class WebSearchService {
     } on SocketException {
       throw StateError('No hay conexión a internet para buscar.');
     } finally {
-      if (_injectedClient == null) {
-        client.close();
-      }
+      if (_client == null) httpClient.close();
     }
   }
 
-  /// Índice .onion de Ahmia. Su buscador exige un token oculto que solo
-  /// aparece en la portada; sin él `/search/` redirige a la portada.
   static const _ahmiaBase =
       'http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion';
   static const _ahmiaHost =
       'juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion';
 
-  Future<String> _searchTor(
-      String query, Duration timeout, Future<void>? cancellation) async {
-    // En pruebas se inyecta un http.Client; en producción se verifica Tor.
-    final port = _injectedClient == null ? await _torPort() : 9050;
+  AhmiaCache _cacheFor() => _cache ?? AhmiaCache();
 
-    final client = _torClient(port);
+  Future<String> _searchTor(
+    String query,
+    Duration timeout,
+    Future<void>? cancellation,
+  ) async {
+    final port = _client == null ? await _torPort() : 9050;
+
+    final httpClient = _torClient(port);
+    final cache = _cacheFor();
     try {
       var token = <String, String>{};
       try {
-        token = _ahmiaToken(
-            await _get(client, '$_ahmiaBase/', timeout, cancellation));
+        final html = await cache.getOrFetch(
+            Uri.parse('$_ahmiaBase/'), timeout, cancellation);
+        token = _ahmiaToken(html);
       } on WebSearchCancelledException {
         rethrow;
       } catch (_) {
         // Sin portada se intenta la búsqueda directa, que puede redirigir.
       }
 
-      final uri = Uri.parse('$_ahmiaBase/search/')
-          .replace(queryParameters: <String, String>{...token, 'q': query});
+      final uri = Uri.parse('$_ahmiaBase/search/').replace(
+          queryParameters: <String, String>{...token, 'q': query});
       final results = _parseTorResults(
-          await _get(client, '$uri', timeout, cancellation));
+          await _get(httpClient, '$uri', timeout, cancellation));
       if (results.isEmpty) {
-        throw StateError('Ahmia no devolvió resultados .onion para «$query».');
+        throw StateError(
+            'Ahmia no devolvió resultados .onion para «$query».');
       }
       return _formatTor(results, query, 'Ahmia');
     } on TimeoutException {
@@ -163,9 +248,7 @@ class WebSearchService {
     } on SocketException {
       throw StateError('No hay conexión a Tor para buscar.');
     } finally {
-      if (_injectedClient == null) {
-        client.close();
-      }
+      if (_client == null) httpClient.close();
     }
   }
 
@@ -183,7 +266,7 @@ class WebSearchService {
             timeout: const Duration(seconds: 3));
         await socket.close();
         return port;
-      } catch (_) {
+      } on SocketException {
         continue;
       }
     }
@@ -193,23 +276,26 @@ class WebSearchService {
   }
 
   http.Client _torClient(int port) {
-    if (_injectedClient != null) {
-      return _injectedClient!;
-    }
+    if (_client != null) return _client!;
     final httpClient = HttpClient();
-    SocksTCPClient.assignToHttpClient(httpClient,
-        <ProxySettings>[ProxySettings(InternetAddress.loopbackIPv4, port)]);
-    return IOClient(httpClient);
+    socks.SocksTCPClient.assignToHttpClient(
+        httpClient,
+        <socks.ProxySettings>[
+          socks.ProxySettings(InternetAddress.loopbackIPv4, port)
+        ]);
+    return io_client.IOClient(httpClient);
   }
 
   static Future<String> _get(
-      http.Client client, String url, Duration timeout,
-      [Future<void>? cancellation]) async {
+    http.Client client,
+    String url,
+    Duration timeout, [
+    Future<void>? cancellation,
+  ]) async {
     final response = await _awaitOrCancel(
         client.get(Uri.parse(url)).timeout(timeout), cancellation);
     if (response.statusCode != 200) {
-      throw StateError(
-          'La búsqueda en Tor falló con HTTP ${response.statusCode}.');
+      throw StateError('La búsqueda en Tor falló con HTTP ${response.statusCode}.');
     }
     return response.body;
   }
@@ -273,7 +359,7 @@ class WebSearchService {
     if (candidate.isEmpty) return null;
     final marker = candidate.indexOf('redirect_url=');
     if (marker >= 0) {
-      candidate = candidate.substring(marker + 'redirect_url='.length);
+      candidate = candidate.substring(marker + 'redirect_url='.length).trim();
       try {
         candidate = Uri.decodeComponent(candidate);
       } catch (_) {
@@ -306,7 +392,8 @@ class WebSearchService {
     final buffer = StringBuffer();
     buffer.writeln('Consulta (Tor/deep web): $query');
     buffer.writeln('Motor: $engine');
-    buffer.writeln('Resultados .onion (requieren Tor Browser para abrir):');
+    buffer.writeln(
+        'Resultados .onion (requieren Tor Browser para abrir):');
     for (final item in results) {
       buffer.writeln('- ${item['title']}');
       final snippet = item['snippet'] ?? '';
@@ -355,14 +442,16 @@ class WebSearchService {
     }
 
     if (abstractText.isEmpty && related.isEmpty) {
-      return 'Consulta: $query\nNo se encontraron resultados directos en la '
+      return 'Consulta: $query\n'
+          'No se encontraron resultados directos en la '
           'búsqueda web. El modelo debe indicar que no hay información '
           'verificada disponible.';
     }
     return buffer.toString().trim();
   }
 
-  static void _collectRelated(dynamic node, List<Map<String, String>> output) {
+  static void _collectRelated(dynamic node,
+      List<Map<String, String>> output) {
     if (node is List) {
       for (final item in node) {
         _collectRelated(item, output);

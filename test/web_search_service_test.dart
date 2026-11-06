@@ -44,16 +44,18 @@ void main() {
   });
 
   test('web_search rechaza consulta vacía', () async {
-    final service = WebSearchService(client: MockClient((_) async {
+    final client = MockClient((request) async {
       return http.Response('{}', 200);
-    }));
+    });
+    final service = WebSearchService(client: client);
     expect(() => service.search('   '), throwsArgumentError);
   });
 
   test('web_search propaga error HTTP', () async {
-    final service = WebSearchService(client: MockClient((_) async {
+    final client = MockClient((request) async {
       return http.Response('error', 500);
-    }));
+    });
+    final service = WebSearchService(client: client);
     expect(() => service.search('flutter'), throwsStateError);
   });
 
@@ -103,19 +105,35 @@ void main() {
         'Enlace de Ahmia</a></h4></li></ol></body></html>';
 
     final requested = <Uri>[];
-    final client = MockClient((request) async {
+
+    void Function()? cacheInvalidate;
+
+    final clientForCache = MockClient((request) async {
       requested.add(request.url);
       if (request.url.path == '/search/') {
-        expect(request.url.queryParameters['18df05'], '4abde3');
+        expect(request.url.queryParameters['18df05'], '4abde3',
+            reason: 'la búsqueda en tor debe enviar el token oculto de la portada');
         expect(request.url.queryParameters['q'], 'privacidad');
         return http.Response(page, 200,
             headers: {'content-type': 'text/html'});
       }
-      return http.Response(home, 200, headers: {'content-type': 'text/html'});
+      if (request.url.path == '/') {
+        cacheInvalidate?.call();
+        return http.Response(home, 200, headers: {'content-type': 'text/html'});
+      }
+      throw UnsupportedError('Ruta inesperada: ${request.url.path}');
     });
 
-    final result = await WebSearchService(client: client)
+    final cache = AhmiaCache(
+      client: clientForCache,
+      ttl: Duration.zero,
+    );
+    cacheInvalidate = () => cache.invalidate();
+
+    final result = await WebSearchService(
+        client: clientForCache, cache: cache)
         .search('privacidad', source: 'tor');
+
     expect(requested.first.path, '/');
     expect(result, contains('Foro XMR'));
     expect(
