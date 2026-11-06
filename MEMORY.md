@@ -549,3 +549,13 @@ Leccion: el **test de conexion es obligatorio**; no se puede prometer que las
 - Etiqueta de capacidades «Crear archivos» → «Herramientas» en `chat_screen`/`model_selector`; el diálogo de contexto menciona búsqueda web/Tor.
 - Verificación: `flutter analyze --no-pub` sin incidencias (exit 0); 24 pruebas de enlaces/búsqueda/pantalla/archivos PASS (exit 0). Sin verificación en vivo: no hay Tor en esta máquina (9050/9150 cerrados), así que el fetch real a Ahmia queda pendiente.
 - Modelos con tools según `ollama show`: qwen2.5:7b, qwen2.5-abliterate:7b, dolphin3-abliterated, qwen3-abliterated:4b-v2 y qwen3.5-abliterated 2B/4B. Sin tools: dolphin-mistral, llama3, llama2-uncensored, wizard-vicuna-uncensored.
+
+## Búsqueda Tor verificada con Tor real — 2026-11-06 (verificado)
+
+- Tor Browser sí estaba instalado (`C:\Users\INdaHouse\Desktop\Tor Browser`), pero cerrado; `LinkLauncherService` ya lo detecta en esa ruta. Al abrirlo, el SOCKS5 de 127.0.0.1:9150 tarda ~90 s en aceptar conexiones (Tor arranca su circuito).
+- **Causa real de que la búsqueda no diera resultados**: Ahmia exige el token oculto que genera en su portada (`#searchForm input[type="hidden"]`, p. ej. `18df05=4abde3`). Sin él, `/search/?q=` responde 302 a la portada de 4,7 KB y el parser devolvía la propia Ahmia como único resultado.
+- Corregido: `_searchTor` pide primero la portada, extrae el token (`_ahmiaToken`) y busca en `/search/` con token + `q`. El token no necesita cookies y sirve para varias consultas.
+- Parser ajustado al marcado real: `ol.searchResults li.result` (`h4 a` + `p` + `cite`). El `href` de cada resultado es `/search/redirect?...&redirect_url=<url>`; `_onionUrl` extrae la URL .onion real y descarta el host de Ahmia.
+- Prueba nueva en `test/web_search_service_test.dart` con ese marcado: token enviado, `redirect_url` resuelto y enlaces de Ahmia descartados.
+- Verificación en vivo con el servicio real (no mock): «privacidad» vía Tor → 10 resultados con URLs `.onion` reales en 5,1 s.
+- Gotcha: el regex anterior de snippet/fallback usaba dobles barras invertidas (`r'\\s+'`), así que no colapsaba espacios y el fallback no casaba URLs; ahora es `r'\s+'`.

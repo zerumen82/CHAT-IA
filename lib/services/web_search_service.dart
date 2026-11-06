@@ -105,37 +105,33 @@ class WebSearchService {
     }
   }
 
+  /// Índice .onion de Ahmia. Su buscador exige un token oculto que solo
+  /// aparece en la portada; sin él `/search/` redirige a la portada.
+  static const _ahmiaBase =
+      'http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion';
+  static const _ahmiaHost =
+      'juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion';
+
   Future<String> _searchTor(String query, Duration timeout) async {
     // En pruebas se inyecta un http.Client; en producción se verifica Tor.
     final port = _injectedClient == null ? await _torPort() : 9050;
 
     final client = _torClient(port);
     try {
-      final encoded = Uri.encodeQueryComponent(query);
-      final engines = <Map<String, String>>[
-        <String, String>{
-          'name': 'Ahmia',
-          'url':
-              'http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/?q=$encoded',
-        },
-      ];
-
-      for (final engine in engines) {
-        try {
-          final uri = Uri.parse(engine['url']!);
-          final response = await client.get(uri).timeout(timeout);
-          if (response.statusCode != 200) continue;
-          final results = _parseTorResults(response.body);
-          if (results.isNotEmpty) {
-            return _formatTor(results, query, engine['name']!);
-          }
-        } catch (_) {
-          continue;
-        }
+      var token = <String, String>{};
+      try {
+        token = _ahmiaToken(await _get(client, '$_ahmiaBase/', timeout));
+      } catch (_) {
+        // Sin portada se intenta la búsqueda directa, que puede redirigir.
       }
-      throw StateError(
-          'No se obtuvieron resultados de la deep web (motores .onion no '
-          'disponibles o sin resultados).');
+
+      final uri = Uri.parse('$_ahmiaBase/search/')
+          .replace(queryParameters: <String, String>{...token, 'q': query});
+      final results = _parseTorResults(await _get(client, '$uri', timeout));
+      if (results.isEmpty) {
+        throw StateError('Ahmia no devolvió resultados .onion para «$query».');
+      }
+      return _formatTor(results, query, 'Ahmia');
     } on TimeoutException {
       throw StateError('La búsqueda en Tor agotó el tiempo de espera.');
     } on SocketException {
@@ -177,45 +173,101 @@ class WebSearchService {
     return IOClient(httpClient);
   }
 
+  static Future<String> _get(
+      http.Client client, String url, Duration timeout) async {
+    final response = await client.get(Uri.parse(url)).timeout(timeout);
+    if (response.statusCode != 200) {
+      throw StateError(
+          'La búsqueda en Tor falló con HTTP ${response.statusCode}.');
+    }
+    return response.body;
+  }
+
+  /// Token oculto del formulario de portada de Ahmia.
+  static Map<String, String> _ahmiaToken(String html) {
+    final params = <String, String>{};
+    final document = html_parser.parse(html);
+    for (final input
+        in document.querySelectorAll('#searchForm input[type="hidden"]')) {
+      final name = input.attributes['name']?.trim() ?? '';
+      final value = input.attributes['value'] ?? '';
+      if (name.isNotEmpty && value.isNotEmpty) {
+        params[name] = value;
+      }
+    }
+    return params;
+  }
+
   static List<Map<String, String>> _parseTorResults(String html) {
+    final document = html_parser.parse(html);
     final results = <Map<String, String>>[];
     final seen = <String>{};
-    final document = html_parser.parse(html);
-    for (final anchor in document.querySelectorAll('a')) {
-      final href = (anchor.attributes['href'] ?? '').trim();
-      if (!href.contains('.onion')) continue;
-      if (!seen.add(href)) continue;
-      final title = anchor.text.trim();
-      String snippet = '';
-      final parent = anchor.parent;
-      if (parent != null) {
-        snippet = parent.text.trim().replaceAll(RegExp(r'\\s+'), ' ');
-        if (snippet.length > 180) {
-          snippet = snippet.substring(0, 180);
-        }
-      }
+
+    void add(String rawUrl, String title, String snippet) {
+      final url = _onionUrl(rawUrl);
+      if (url == null || !seen.add(url)) return;
       results.add(<String, String>{
-        'title': title.isEmpty ? href : title,
-        'url': href,
-        'snippet': snippet,
+        'title': title.isEmpty ? url : title,
+        'url': url,
+        'snippet': _shorten(snippet),
       });
-      if (results.length >= 10) break;
     }
+
+    // Ahmia: ol.searchResults > li.result > h4 a + p + cite. El href pasa por
+    // su redirector, así que la URL .onion real viaja en redirect_url.
+    for (final item in document.querySelectorAll('ol.searchResults li.result')) {
+      if (results.length >= 10) break;
+      final anchor = item.querySelector('h4 a') ?? item.querySelector('a');
+      final cite = item.querySelector('cite')?.text ?? '';
+      add(
+        anchor?.attributes['href'] ?? cite,
+        _clean(anchor?.text ?? ''),
+        item.querySelector('p')?.text ?? '',
+      );
+    }
+
+    // Índices .onion con otro marcado: cualquier enlace directo.
     if (results.isEmpty) {
-      final regex = RegExp(r'https?://[a-z2-7]{16,56}\\.onion[^\\s"<>]*');
-      for (final match in regex.allMatches(html)) {
-        final url = match.group(0)!;
-        if (seen.add(url)) {
-          results.add(<String, String>{
-            'title': url,
-            'url': url,
-            'snippet': '',
-          });
-          if (results.length >= 10) break;
-        }
+      for (final anchor in document.querySelectorAll('a')) {
+        if (results.length >= 10) break;
+        add(anchor.attributes['href'] ?? '', _clean(anchor.text), '');
       }
     }
     return results;
+  }
+
+  /// URL .onion real a partir de un enlace directo o del redirector de Ahmia.
+  static String? _onionUrl(String raw) {
+    var candidate = raw.trim();
+    if (candidate.isEmpty) return null;
+    final marker = candidate.indexOf('redirect_url=');
+    if (marker >= 0) {
+      candidate = candidate.substring(marker + 'redirect_url='.length);
+      try {
+        candidate = Uri.decodeComponent(candidate);
+      } catch (_) {
+        // Codificación no válida: se usa el valor tal cual.
+      }
+      candidate = candidate.trim();
+    }
+    if (!candidate.toLowerCase().contains('.onion')) return null;
+    if (!candidate.contains('://')) {
+      final host =
+          candidate.startsWith('//') ? candidate.substring(2) : candidate;
+      candidate = 'http://$host';
+    }
+    final parsed = Uri.tryParse(candidate);
+    final host = parsed?.host.toLowerCase() ?? '';
+    if (!host.endsWith('.onion') || host == _ahmiaHost) return null;
+    return candidate;
+  }
+
+  static String _clean(String text) =>
+      text.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+  static String _shorten(String text) {
+    final clean = _clean(text);
+    return clean.length > 180 ? clean.substring(0, 180) : clean;
   }
 
   static String _formatTor(

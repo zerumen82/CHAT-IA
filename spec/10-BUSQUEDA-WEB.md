@@ -25,6 +25,8 @@ sin ejecución de código ni acceso a URLs arbitrarias.
 ## Notas
 - `source="tor"` requiere Tor en ejecución; si no está disponible, la
   herramienta devuelve error claro.
+- Ahmia exige el token oculto que genera en su portada; sin él `/search/`
+  redirige a la portada. La búsqueda pide primero la portada y reutiliza el token.
 - Los enlaces .onion requieren Tor Browser para abrirse. En el chat, pulsar un
   enlace .onion muestra un aviso con copia al portapapeles y apertura en Tor
   Browser si está detectado; los enlaces http/https abren el navegador del sistema.

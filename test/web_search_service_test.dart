@@ -74,4 +74,46 @@ void main() {
     expect(result, contains('Sitio Onion'));
     expect(result, contains('exampleonion1234567890abcdef.onion/page'));
   });
+
+  test('web_search con source=tor usa el token de Ahmia y la URL real',
+      () async {
+    const home = '<html><body><form id="searchForm" action="/search/" '
+        'method="get"><input id="id_q" type="search" name="q">'
+        '<input type="hidden" name="18df05" value="4abde3">'
+        '</form></body></html>';
+    const page = '<html><body><ol class="searchResults">'
+        '<li class="result"><h4><a href="/search/redirect?search_term=test'
+        '&redirect_url=http://gbkxefzhrrjh5prrbhdlbtgnrrubelyukalgct7jesqrv6b3mjtkb5yd.onion/page/x">'
+        'Foro XMR</a></h4><p>xmrstars for everybody.</p>'
+        '<cite>gbkxefzhrrjh5prrbhdlbtgnrrubelyukalgct7jesqrv6b3mjtkb5yd.onion</cite>'
+        '</li>'
+        '<li class="result"><h4><a href="/search/redirect?search_term=test'
+        '&redirect_url=http://juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion/search/?q=test">'
+        'Enlace de Ahmia</a></h4></li></ol></body></html>';
+
+    final requested = <Uri>[];
+    final client = MockClient((request) async {
+      requested.add(request.url);
+      if (request.url.path == '/search/') {
+        expect(request.url.queryParameters['18df05'], '4abde3');
+        expect(request.url.queryParameters['q'], 'privacidad');
+        return http.Response(page, 200,
+            headers: {'content-type': 'text/html'});
+      }
+      return http.Response(home, 200, headers: {'content-type': 'text/html'});
+    });
+
+    final result = await WebSearchService(client: client)
+        .search('privacidad', source: 'tor');
+    expect(requested.first.path, '/');
+    expect(result, contains('Foro XMR'));
+    expect(
+      result,
+      contains(
+          'gbkxefzhrrjh5prrbhdlbtgnrrubelyukalgct7jesqrv6b3mjtkb5yd.onion/page/x'),
+    );
+    expect(result, contains('xmrstars for everybody.'));
+    expect(result, isNot(contains('/search/redirect')));
+    expect(result, isNot(contains('Enlace de Ahmia')));
+  });
 }
