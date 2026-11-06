@@ -105,8 +105,8 @@ class AssistantMarkdown extends StatelessWidget {
   /// Los enlaces normales se abren en el navegador del sistema. Los `.onion`
   /// solo existen dentro de Tor, así que se explican y se ofrecen a Tor Browser.
   Future<void> _openLink(BuildContext context, String? href) async {
-    final url = (href ?? '').trim();
-    if (!LinkLauncherService.isWebUrl(url)) {
+    final url = LinkLauncherService.normalizeUrl(href ?? '');
+    if (url == null) {
       _notify(context, 'El enlace no es válido.');
       return;
     }

@@ -33,6 +33,31 @@ class LinkLauncherService {
         uri.host.isNotEmpty;
   }
 
+  static final _hostChars = RegExp(r'^[a-z0-9.-]+$', caseSensitive: false);
+
+  /// Devuelve la URL lista para abrir. Acepta hosts sin esquema
+  /// ("www.ejemplo.com"), que el modelo escribe a veces, y descarta esquemas
+  /// desconocidos o texto con espacios.
+  static String? normalizeUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty || trimmed.contains(RegExp(r'\s'))) {
+      return null;
+    }
+    if (trimmed.contains('://')) {
+      return isWebUrl(trimmed) ? trimmed : null;
+    }
+    final parsed = Uri.tryParse('https://$trimmed');
+    if (parsed == null ||
+        parsed.host.isEmpty ||
+        !parsed.host.contains('.') ||
+        !_hostChars.hasMatch(parsed.host)) {
+      return null;
+    }
+    final scheme =
+        parsed.host.toLowerCase().endsWith('.onion') ? 'http' : 'https';
+    return '$scheme://$trimmed';
+  }
+
   /// Abre el enlace con el navegador predeterminado del sistema.
   Future<bool> openExternal(String url) async {
     final opener = _opener;

@@ -1201,10 +1201,16 @@ class ChatServiceOllama with ChangeNotifier {
             if (!seenSearches.add('$source::$query')) {
               continue;
             }
-            final result =
-                await WebSearchService.instance.search(query, source: source);
             searchBuffer.writeln('Búsqueda: $query');
-            searchBuffer.writeln(result);
+            try {
+              final result = await WebSearchService.instance
+                  .search(query, source: source);
+              searchBuffer.writeln(result);
+            } catch (error) {
+              // Un fallo de red (Tor cerrado, Ahmia caída) no debe tumbar el
+              // turno: el modelo recibe el error y lo explica al usuario.
+              searchBuffer.writeln('Error de búsqueda: $error');
+            }
             searchBuffer.writeln();
           }
         }
@@ -1216,13 +1222,29 @@ class ChatServiceOllama with ChangeNotifier {
               ? ''
               : 'Archivos creados en este turno: '
                   '${generated.map((file) => file.name).join(', ')}.\n';
+          // Los resultados no pasan por el planificador de contexto: se
+          // recortan aquí para no desbordar el modelo en perfiles pequeños.
+          final searchBudget = math.max(
+              1200,
+              (prepared.profile.tokens -
+                          prepared.responseTokens -
+                          prepared.estimatedPromptTokens -
+                          ContextConfig.safetyTokens) *
+                      ContextConfig.charsPerToken);
+          var results = searchBuffer.toString().trim();
+          if (results.length > searchBudget) {
+            final cut = results.lastIndexOf('\n', searchBudget);
+            results = '${results.substring(0, cut > 0 ? cut : searchBudget)}\n'
+                '[…resultados recortados para no superar el contexto]';
+          }
           final followupMessages = List<OllamaMessage>.from(prepared.messages)
             ..add(OllamaMessage(
                 role: 'user',
                 content:
-                    '${fileNote}Resultados de búsqueda:\n${searchBuffer.toString().trim()}\n\n'
+                    '${fileNote}Resultados de búsqueda:\n$results\n\n'
                     'Responde a la pregunta original usando estos resultados. '
                     'Cita las fuentes con sus URLs cuando sea posible. '
+                    'Si alguna búsqueda falló, dilo con claridad. '
                     'No inventes información fuera de los resultados.'));
           final secondDone = Completer<void>();
           _streamCompleter = secondDone;
