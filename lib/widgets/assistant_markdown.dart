@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 
+import '../services/link_launcher_service.dart';
+
 /// Respuesta del asistente con formato Markdown: negritas, listas, tablas y
 /// bloques de código con botón para copiar.
 class AssistantMarkdown extends StatelessWidget {
@@ -96,6 +98,168 @@ class AssistantMarkdown extends StatelessWidget {
       selectable: false,
       styleSheet: styleSheet,
       builders: {'pre': _CodeBlockBuilder(textColor: textColor)},
+      onTapLink: (label, href, title) => _openLink(context, href),
+    );
+  }
+
+  /// Los enlaces normales se abren en el navegador del sistema. Los `.onion`
+  /// solo existen dentro de Tor, así que se explican y se ofrecen a Tor Browser.
+  Future<void> _openLink(BuildContext context, String? href) async {
+    final url = (href ?? '').trim();
+    if (!LinkLauncherService.isWebUrl(url)) {
+      _notify(context, 'El enlace no es válido.');
+      return;
+    }
+    if (LinkLauncherService.isOnion(url)) {
+      await showDialog<void>(
+        context: context,
+        builder: (_) => _OnionLinkDialog(url: url),
+      );
+      return;
+    }
+    final opened = await LinkLauncherService.instance.openExternal(url);
+    if (!opened && context.mounted) {
+      _notify(context, 'No se pudo abrir el navegador del sistema.');
+    }
+  }
+
+  void _notify(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+}
+
+/// Aviso al pulsar un enlace .onion: un navegador normal no puede abrirlo.
+class _OnionLinkDialog extends StatefulWidget {
+  final String url;
+
+  const _OnionLinkDialog({required this.url});
+
+  @override
+  State<_OnionLinkDialog> createState() => _OnionLinkDialogState();
+}
+
+class _OnionLinkDialogState extends State<_OnionLinkDialog> {
+  bool _checking = true;
+  bool _torRunning = false;
+  bool _hasTorBrowser = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _detect();
+  }
+
+  Future<void> _detect() async {
+    final launcher = LinkLauncherService.instance;
+    final hasBrowser = await launcher.torBrowserPath() != null;
+    final torRunning = await launcher.torRunning();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _hasTorBrowser = hasBrowser;
+      _torRunning = torRunning;
+      _checking = false;
+    });
+  }
+
+  Future<void> _copy() async {
+    final messenger = ScaffoldMessenger.of(context);
+    await Clipboard.setData(ClipboardData(text: widget.url));
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pop();
+    messenger.showSnackBar(const SnackBar(
+      content: Text('Enlace .onion copiado. Pégalo en Tor Browser.'),
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  Future<void> _open() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final opened = await LinkLauncherService.instance.openInTorBrowser(widget.url);
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pop();
+    messenger.showSnackBar(SnackBar(
+      content: Text(opened
+          ? 'Abriendo en Tor Browser…'
+          : 'No se pudo abrir Tor Browser. Copia el enlace y pégalo allí.'),
+      behavior: SnackBarBehavior.floating,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final canOpen = !_checking && _torRunning && _hasTorBrowser;
+
+    return AlertDialog(
+      title: const Row(
+        children: [
+          Icon(Icons.lock_outline, size: 20),
+          SizedBox(width: 8),
+          Expanded(child: Text('Enlace .onion')),
+        ],
+      ),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SelectableText(
+              widget.url,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(fontFamily: 'Consolas'),
+            ),
+            const SizedBox(height: 12),
+            const Text('Esta dirección solo existe dentro de la red Tor: '
+                'Chrome, Edge o Firefox no pueden abrirla por sí solos.'),
+            const SizedBox(height: 12),
+            const Text('Copia el enlace y pégalo en la barra de direcciones de '
+                'Tor Browser. LightChat no puede verificar el contenido de '
+                'esos sitios.'),
+            const SizedBox(height: 12),
+            if (_checking)
+              const LinearProgressIndicator()
+            else
+              Text(
+                _torRunning
+                    ? (_hasTorBrowser
+                        ? 'Tor está activo y se ha encontrado Tor Browser.'
+                        : 'Tor está activo, pero no se ha encontrado Tor Browser.')
+                    : 'No se detecta Tor activo: abre Tor Browser y espera a '
+                        'que conecte antes de abrir el enlace.',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cerrar'),
+        ),
+        TextButton(
+          onPressed: _copy,
+          child: const Text('Copiar enlace'),
+        ),
+        if (canOpen)
+          FilledButton(
+            onPressed: _open,
+            child: const Text('Abrir en Tor Browser'),
+          ),
+      ],
     );
   }
 }

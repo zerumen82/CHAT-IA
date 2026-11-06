@@ -122,8 +122,8 @@ class _ContextSettingsDialogState extends State<_ContextSettingsDialog> {
                         'se mantiene el mismo valor en los siguientes mensajes.'),
                     const SizedBox(height: 12),
                     Text(profile.supportsTools
-                        ? 'El modelo permite crear archivos PDF y Excel/XLSX.'
-                        : 'Este modelo no anuncia herramientas. Para crear archivos desde el chat, usa un modelo compatible, como Qwen2.5.'),
+                        ? 'El modelo permite buscar en la web/Tor y crear archivos PDF y Excel/XLSX.'
+                        : 'Este modelo no anuncia herramientas. Para buscar en la web o crear archivos desde el chat, usa un modelo compatible, como Qwen2.5.'),
                   ] else if (_error == null)
                     const LinearProgressIndicator(),
                   const SizedBox(height: 20),

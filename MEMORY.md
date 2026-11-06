@@ -535,3 +535,17 @@ Leccion: el **test de conexion es obligatorio**; no se puede prometer que las
 - flutter analyze: sin incidencias.
 - flutter test ollama_catalog: 3 PASS.
 - flutter build windows: PASS (78.8s).
+
+## Búsqueda Tor (deep web) - 2026-11-05 (verificado)
+- Añadida dependencia socks5_proxy ^2.1.2.
+- web_search ahora acepta source=web|tor. source=tor usa proxy SOCKS5 127.0.0.1:9050 (Tor) y consulta motores .onion (Ahmia, Torch), devolviendo enlaces .onion. (Torch retirado el 2026-11-06; ver entrada siguiente.)
+- flutter analyze: No issues found. Tests web_search_service: 6 PASS; chat_service_ollama: 25 PASS.
+
+## Búsqueda en Tor y enlaces .onion — 2026-11-06
+
+- `web_search source="tor"` ya existía, pero el propio prompt lo bloqueaba: `ContextConfig.toolPrompt` afirmaba que web_search «no accede a la dark net». Corregido: ahora pide usar `source="tor"` para deep web/dark web/Tor y presentar los enlaces .onion sin inventar contenido.
+- `WebSearchService` prueba los puertos SOCKS5 9050 (servicio tor) y 9150 (Tor Browser) y falla con un mensaje explícito si ninguno responde. Eliminado el motor Torch: su dirección en el código no coincidía con ninguna publicada; queda Ahmia (dirección verificada en ahmia.fi: empieza juhanurmihxlp77 y termina 4csyd.onion), que además bloquea material de abuso.
+- Enlaces del chat: `MarkdownBody` no tenía `onTapLink`, así que ningún enlace abría nada. Nuevo `LinkLauncherService` + manejador en `AssistantMarkdown`: http/https al navegador del sistema; `.onion` abre un diálogo con explicación, copia al portapapeles y «Abrir en Tor Browser» solo si hay Tor activo y se encuentra el ejecutable.
+- Etiqueta de capacidades «Crear archivos» → «Herramientas» en `chat_screen`/`model_selector`; el diálogo de contexto menciona búsqueda web/Tor.
+- Verificación: `flutter analyze --no-pub` sin incidencias (exit 0); 24 pruebas de enlaces/búsqueda/pantalla/archivos PASS (exit 0). Sin verificación en vivo: no hay Tor en esta máquina (9050/9150 cerrados), así que el fetch real a Ahmia queda pendiente.
+- Modelos con tools según `ollama show`: qwen2.5:7b, qwen2.5-abliterate:7b, dolphin3-abliterated, qwen3-abliterated:4b-v2 y qwen3.5-abliterated 2B/4B. Sin tools: dolphin-mistral, llama3, llama2-uncensored, wizard-vicuna-uncensored.

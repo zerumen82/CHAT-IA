@@ -485,7 +485,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ? [
                   'Texto',
                   if (profile!.supportsVision) 'Imágenes',
-                  if (profile.supportsTools) 'Crear archivos'
+                  if (profile.supportsTools) 'Herramientas'
                 ].join(' · ')
               : 'Capacidades del modelo por comprobar';
           return Padding(

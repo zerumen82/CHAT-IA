@@ -328,7 +328,7 @@ class ModelSelector extends StatelessWidget {
     return [
       'Texto',
       if (profile.supportsVision) 'Imágenes',
-      if (profile.supportsTools) 'Crear archivos'
+      if (profile.supportsTools) 'Herramientas'
     ].join(' · ');
   }
 }

@@ -54,5 +54,24 @@ void main() {
           .contains('query'),
       isTrue,
     );
+    expect(
+      (WebSearchService.tool['function']['parameters']['properties'] as Map)
+          .containsKey('source'),
+      isTrue,
+    );
+  });
+
+  test('web_search con source=tor parsea enlaces .onion', () async {
+    final html = '<html><body>'
+        '<a href="http://exampleonion1234567890abcdef.onion/page">Sitio Onion</a>'
+        '<p>Descripción del sitio</p>'
+        '</body></html>';
+    final client = MockClient((request) async {
+      return http.Response(html, 200, headers: {'content-type': 'text/html'});
+    });
+    final service = WebSearchService(client: client);
+    final result = await service.search('privacy', source: 'tor');
+    expect(result, contains('Sitio Onion'));
+    expect(result, contains('exampleonion1234567890abcdef.onion/page'));
   });
 }

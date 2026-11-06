@@ -1194,13 +1194,15 @@ class ChatServiceOllama with ChangeNotifier {
             final args =
                 Map<String, dynamic>.from(call['function']['arguments'] as Map);
             final query = (args['query'] as String? ?? '').trim();
+            final source = (args['source'] as String? ?? 'web').trim();
             if (query.isEmpty) {
               continue;
             }
-            if (!seenSearches.add(query)) {
+            if (!seenSearches.add('$source::$query')) {
               continue;
             }
-            final result = await WebSearchService.instance.search(query);
+            final result =
+                await WebSearchService.instance.search(query, source: source);
             searchBuffer.writeln('Búsqueda: $query');
             searchBuffer.writeln(result);
             searchBuffer.writeln();
@@ -1218,7 +1220,7 @@ class ChatServiceOllama with ChangeNotifier {
             ..add(OllamaMessage(
                 role: 'user',
                 content:
-                    '${fileNote}Resultados de búsqueda web:\\n${searchBuffer.toString().trim()}\\n\\n'
+                    '${fileNote}Resultados de búsqueda:\\n${searchBuffer.toString().trim()}\\n\\n'
                     'Responde a la pregunta original usando estos resultados. '
                     'Cita las fuentes con sus URLs cuando sea posible. '
                     'No inventes información fuera de los resultados.'));

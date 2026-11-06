@@ -14,6 +14,7 @@ dependencies:
   # HTTP y API
   html: ^0.15.6
   http: ^1.1.2
+  socks5_proxy: ^2.1.2
   
   # Almacenamiento
   shared_preferences: ^2.2.2
