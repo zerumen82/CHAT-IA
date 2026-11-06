@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -30,6 +32,15 @@ void main() {
     final service = WebSearchService(client: client);
     final result = await service.search('xyz');
     expect(result, contains('No se encontraron resultados directos'));
+  });
+
+  test('detener la generación corta la búsqueda en curso', () async {
+    final pending = Completer<http.Response>();
+    final cancellation = Completer<void>();
+    final search = WebSearchService(client: MockClient((_) => pending.future))
+        .search('lento', cancellation: cancellation.future);
+    cancellation.complete();
+    await expectLater(search, throwsA(isA<WebSearchCancelledException>()));
   });
 
   test('web_search rechaza consulta vacía', () async {

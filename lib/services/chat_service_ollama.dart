@@ -1201,17 +1201,25 @@ class ChatServiceOllama with ChangeNotifier {
             if (!seenSearches.add('$source::$query')) {
               continue;
             }
-            searchBuffer.writeln('Búsqueda: $query');
             try {
-              final result = await WebSearchService.instance
-                  .search(query, source: source);
+              final result = await WebSearchService.instance.search(
+                query,
+                source: source,
+                cancellation: _requestCancellation?.future,
+              );
+              searchBuffer.writeln('Búsqueda: $query');
               searchBuffer.writeln(result);
+              searchBuffer.writeln();
+            } on WebSearchCancelledException {
+              // «Detener» aborta la petición en curso: no hay respuesta falsa.
+              break;
             } catch (error) {
               // Un fallo de red (Tor cerrado, Ahmia caída) no debe tumbar el
               // turno: el modelo recibe el error y lo explica al usuario.
+              searchBuffer.writeln('Búsqueda: $query');
               searchBuffer.writeln('Error de búsqueda: $error');
+              searchBuffer.writeln();
             }
-            searchBuffer.writeln();
           }
         }
 

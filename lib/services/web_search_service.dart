@@ -58,8 +58,13 @@ class WebSearchService {
       <Map<String, dynamic>>[...fileTools, tool];
 
   /// Ejecuta una búsqueda y devuelve texto legible para el modelo.
+  ///
+  /// [cancellation] permite que «Detener» corte la petición en curso: en ese
+  /// caso se lanza [WebSearchCancelledException].
   Future<String> search(String rawQuery,
-      {String source = 'web', Duration timeout = const Duration(seconds: 15)}) async {
+      {String source = 'web',
+      Duration timeout = const Duration(seconds: 15),
+      Future<void>? cancellation}) async {
     final query = rawQuery.trim();
     if (query.isEmpty) {
       throw ArgumentError('La consulta de búsqueda no puede estar vacía.');
@@ -71,13 +76,26 @@ class WebSearchService {
     final normalizedSource = source.trim().toLowerCase();
     if (normalizedSource == 'tor') {
       // Ahmia por Tor tarda 4-12 s medidos (portada + resultados).
-      return _searchTor(
-          query, timeout < _minTorTimeout ? _minTorTimeout : timeout);
+      return _searchTor(query,
+          timeout < _minTorTimeout ? _minTorTimeout : timeout, cancellation);
     }
-    return _searchWeb(query, timeout);
+    return _searchWeb(query, timeout, cancellation);
   }
 
-  Future<String> _searchWeb(String query, Duration timeout) async {
+  /// Devuelve [request] o falla en cuanto se completa [cancellation].
+  static Future<T> _awaitOrCancel<T>(
+      Future<T> request, Future<void>? cancellation) {
+    if (cancellation == null) {
+      return request;
+    }
+    return Future.any<T>(<Future<T>>[
+      request,
+      cancellation.then<T>((_) => throw const WebSearchCancelledException()),
+    ]);
+  }
+
+  Future<String> _searchWeb(
+      String query, Duration timeout, Future<void>? cancellation) async {
     final client = _client();
     try {
       final uri = Uri.https('api.duckduckgo.com', '/', <String, String>{
@@ -86,7 +104,8 @@ class WebSearchService {
         'no_html': '1',
         'skip_disambig': '1',
       });
-      final response = await client.get(uri).timeout(timeout);
+      final response =
+          await _awaitOrCancel(client.get(uri).timeout(timeout), cancellation);
       if (response.statusCode != 200) {
         throw StateError(
             'La búsqueda web falló con HTTP ${response.statusCode}.');
@@ -114,7 +133,8 @@ class WebSearchService {
   static const _ahmiaHost =
       'juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion';
 
-  Future<String> _searchTor(String query, Duration timeout) async {
+  Future<String> _searchTor(
+      String query, Duration timeout, Future<void>? cancellation) async {
     // En pruebas se inyecta un http.Client; en producción se verifica Tor.
     final port = _injectedClient == null ? await _torPort() : 9050;
 
@@ -122,14 +142,18 @@ class WebSearchService {
     try {
       var token = <String, String>{};
       try {
-        token = _ahmiaToken(await _get(client, '$_ahmiaBase/', timeout));
+        token = _ahmiaToken(
+            await _get(client, '$_ahmiaBase/', timeout, cancellation));
+      } on WebSearchCancelledException {
+        rethrow;
       } catch (_) {
         // Sin portada se intenta la búsqueda directa, que puede redirigir.
       }
 
       final uri = Uri.parse('$_ahmiaBase/search/')
           .replace(queryParameters: <String, String>{...token, 'q': query});
-      final results = _parseTorResults(await _get(client, '$uri', timeout));
+      final results = _parseTorResults(
+          await _get(client, '$uri', timeout, cancellation));
       if (results.isEmpty) {
         throw StateError('Ahmia no devolvió resultados .onion para «$query».');
       }
@@ -179,8 +203,10 @@ class WebSearchService {
   }
 
   static Future<String> _get(
-      http.Client client, String url, Duration timeout) async {
-    final response = await client.get(Uri.parse(url)).timeout(timeout);
+      http.Client client, String url, Duration timeout,
+      [Future<void>? cancellation]) async {
+    final response = await _awaitOrCancel(
+        client.get(Uri.parse(url)).timeout(timeout), cancellation);
     if (response.statusCode != 200) {
       throw StateError(
           'La búsqueda en Tor falló con HTTP ${response.statusCode}.');
@@ -355,4 +381,12 @@ class WebSearchService {
       }
     }
   }
+}
+
+/// Se lanza cuando el usuario detiene la generación mientras se busca.
+class WebSearchCancelledException implements Exception {
+  const WebSearchCancelledException();
+
+  @override
+  String toString() => 'Búsqueda cancelada.';
 }
