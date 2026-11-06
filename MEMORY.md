@@ -558,4 +558,6 @@ Leccion: el **test de conexion es obligatorio**; no se puede prometer que las
 - Parser ajustado al marcado real: `ol.searchResults li.result` (`h4 a` + `p` + `cite`). El `href` de cada resultado es `/search/redirect?...&redirect_url=<url>`; `_onionUrl` extrae la URL .onion real y descarta el host de Ahmia.
 - Prueba nueva en `test/web_search_service_test.dart` con ese marcado: token enviado, `redirect_url` resuelto y enlaces de Ahmia descartados.
 - Verificación en vivo con el servicio real (no mock): «privacidad» vía Tor → 10 resultados con URLs `.onion` reales en 5,1 s.
+- Tiempos medidos con el servicio real: 12,3 s en frío y 4-5 s en caliente (portada + página de resultados). El timeout de Tor sube a 30 s mínimo (`_minTorTimeout`) porque con 15 s fallaba de forma intermitente; la búsqueda web normal mantiene 15 s.
+- El prompt de seguimiento que recibe el modelo llevaba barras invertidas literales en vez de saltos de línea; corregido en `chat_service_ollama` para que los resultados lleguen separados de verdad.
 - Gotcha: el regex anterior de snippet/fallback usaba dobles barras invertidas (`r'\\s+'`), así que no colapsaba espacios y el fallback no casaba URLs; ahora es `r'\s+'`.

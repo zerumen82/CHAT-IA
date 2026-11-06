@@ -70,7 +70,9 @@ class WebSearchService {
 
     final normalizedSource = source.trim().toLowerCase();
     if (normalizedSource == 'tor') {
-      return _searchTor(query, timeout);
+      // Ahmia por Tor tarda 4-12 s medidos (portada + resultados).
+      return _searchTor(
+          query, timeout < _minTorTimeout ? _minTorTimeout : timeout);
     }
     return _searchWeb(query, timeout);
   }
@@ -145,6 +147,9 @@ class WebSearchService {
 
   /// Puertos SOCKS5 locales habituales: servicio `tor` y Tor Browser.
   static const torPorts = <int>[9050, 9150];
+
+  /// Margen mínimo en Tor: medido 12,3 s en frío y 4-5 s en caliente.
+  static const _minTorTimeout = Duration(seconds: 30);
 
   /// Devuelve el primer puerto SOCKS5 local que acepta conexiones.
   static Future<int> _torPort() async {

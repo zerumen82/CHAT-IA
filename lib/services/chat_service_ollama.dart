@@ -1215,12 +1215,12 @@ class ChatServiceOllama with ChangeNotifier {
           final fileNote = generated.isEmpty
               ? ''
               : 'Archivos creados en este turno: '
-                  '${generated.map((file) => file.name).join(', ')}.\\n';
+                  '${generated.map((file) => file.name).join(', ')}.\n';
           final followupMessages = List<OllamaMessage>.from(prepared.messages)
             ..add(OllamaMessage(
                 role: 'user',
                 content:
-                    '${fileNote}Resultados de búsqueda:\\n${searchBuffer.toString().trim()}\\n\\n'
+                    '${fileNote}Resultados de búsqueda:\n${searchBuffer.toString().trim()}\n\n'
                     'Responde a la pregunta original usando estos resultados. '
                     'Cita las fuentes con sus URLs cuando sea posible. '
                     'No inventes información fuera de los resultados.'));
