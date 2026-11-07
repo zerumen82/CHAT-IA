@@ -145,4 +145,20 @@ void main() {
     expect(result, isNot(contains('/search/redirect')));
     expect(result, isNot(contains('Enlace de Ahmia')));
   });
+
+  test('detecta cuándo el usuario pide deep web o Tor', () {
+    expect(WebSearchService.seemsTorRequest('busca en la deep web'), isTrue);
+    expect(WebSearchService.seemsTorRequest('algo de dark web, por favor'),
+        isTrue);
+    expect(WebSearchService.seemsTorRequest('busca en Tor sobre privacidad'),
+        isTrue);
+    expect(
+        WebSearchService.seemsTorRequest('encuentra un foro .onion de libros'),
+        isTrue);
+    expect(WebSearchService.seemsTorRequest('busca en la red tor'), isTrue);
+    expect(WebSearchService.seemsTorRequest('historia del motor de vapor'),
+        isFalse);
+    expect(WebSearchService.seemsTorRequest('precio de un portátil'),
+        isFalse);
+  });
 }

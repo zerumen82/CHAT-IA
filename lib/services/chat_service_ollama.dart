@@ -1194,7 +1194,12 @@ class ChatServiceOllama with ChangeNotifier {
             final args =
                 Map<String, dynamic>.from(call['function']['arguments'] as Map);
             final query = (args['query'] as String? ?? '').trim();
-            final source = (args['source'] as String? ?? 'web').trim();
+            // Si el usuario pidió deep web/Tor, no se acepta una búsqueda en
+            // la web normal: el modelo devolvería enlaces corrientes mientras
+            // el usuario espera .onion.
+            final source = WebSearchService.seemsTorRequest(text)
+                ? 'tor'
+                : (args['source'] as String? ?? 'web').trim();
             if (query.isEmpty) {
               continue;
             }
@@ -1251,7 +1256,8 @@ class ChatServiceOllama with ChangeNotifier {
                 content:
                     '${fileNote}Resultados de búsqueda:\n$results\n\n'
                     'Responde a la pregunta original usando estos resultados. '
-                    'Cita las fuentes con sus URLs cuando sea posible. '
+                    'Cita las fuentes con sus URLs completas, empezando por '
+                    'https:// o http://, para que se puedan abrir. '
                     'Si alguna búsqueda falló, dilo con claridad. '
                     'No inventes información fuera de los resultados.'));
           final secondDone = Completer<void>();

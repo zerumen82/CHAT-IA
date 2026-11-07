@@ -138,6 +138,17 @@ class WebSearchService {
           List<Map<String, dynamic>> fileTools) =>
       <Map<String, dynamic>>[...fileTools, tool];
 
+  static final _torRequest = RegExp(
+      r'\b(tor|onion|deep ?web|dark ?web|deepweb|darkweb)\b',
+      caseSensitive: false);
+
+  /// El mensaje del usuario de este turno pide la red Tor / deep web.
+  ///
+  /// Los modelos pequeños eligen `source="web"` por inercia aunque el prompt
+  /// se lo indique, y devuelven enlaces de la web normal; el chat usa esta
+  /// comprobación para forzar la búsqueda en Tor cuando corresponde.
+  static bool seemsTorRequest(String text) => _torRequest.hasMatch(text);
+
   Future<String> search(String rawQuery, {
     String source = 'web',
     Duration timeout = const Duration(seconds: 15),
