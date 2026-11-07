@@ -41,4 +41,26 @@ void main() {
     expect(LinkLauncherService.normalizeUrl('sin puntos'), isNull);
     expect(LinkLauncherService.normalizeUrl(''), isNull);
   });
+
+  test('convierte dominios sueltos en enlaces pulsables', () {
+    expect(LinkLauncherService.linkifyMarkdown('amazon.es/dp/B0'),
+        '[amazon.es/dp/B0](https://amazon.es/dp/B0)');
+    expect(
+        LinkLauncherService.linkifyMarkdown(
+            'gbkxefzhrrjh5prrbhdlbtgnrrubelyukalgct7jesqrv6b3mjtkb5yd.onion'),
+        '[gbkxefzhrrjh5prrbhdlbtgnrrubelyukalgct7jesqrv6b3mjtkb5yd.onion]'
+        '(http://gbkxefzhrrjh5prrbhdlbtgnrrubelyukalgct7jesqrv6b3mjtkb5yd.onion)');
+    expect(LinkLauncherService.linkifyMarkdown('visita amazon.es.'),
+        'visita [amazon.es](https://amazon.es).');
+  });
+
+  test('no toca código ni enlaces ya escritos', () {
+    expect(LinkLauncherService.linkifyMarkdown('[A](https://amazon.es)'),
+        '[A](https://amazon.es)');
+    expect(LinkLauncherService.linkifyMarkdown('`amazon.es`'), '`amazon.es`');
+    expect(LinkLauncherService.linkifyMarkdown('```\namazon.es\n```'),
+        '```\namazon.es\n```');
+    expect(LinkLauncherService.linkifyMarkdown('archivo.txt y Node.js'),
+        'archivo.txt y Node.js');
+  });
 }

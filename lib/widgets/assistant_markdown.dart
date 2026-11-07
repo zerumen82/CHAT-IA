@@ -94,7 +94,9 @@ class AssistantMarkdown extends StatelessWidget {
     );
 
     return MarkdownBody(
-      data: text,
+      // El modelo escribe a veces los dominios a secas; sin esto se ven pero
+      // no se pueden pulsar.
+      data: LinkLauncherService.linkifyMarkdown(text),
       selectable: false,
       styleSheet: styleSheet,
       builders: {'pre': _CodeBlockBuilder(textColor: textColor)},

@@ -58,6 +58,42 @@ class LinkLauncherService {
     return '$scheme://$trimmed';
   }
 
+  /// Convierte en enlaces los dominios que el modelo escribe a secas
+  /// («amazon.es/dp/x», «abc.onion»): Markdown solo autoenlaza `http(s)://` y
+  /// `www.`, así que sin esto el texto se ve pero no se puede pulsar.
+  /// Respeta bloques de código, código en línea y enlaces ya escritos.
+  static String linkifyMarkdown(String text) {
+    if (!text.contains('.')) return text;
+    return text.replaceAllMapped(_linkTokens, (Match match) {
+      final groups = match as RegExpMatch;
+      final raw = groups.namedGroup('url') ?? groups.namedGroup('bare');
+      if (raw == null) return match[0]!;
+      var candidate = raw;
+      var trailing = '';
+      while (candidate.isNotEmpty &&
+          '.,;:!?'.contains(candidate[candidate.length - 1])) {
+        trailing = '${candidate[candidate.length - 1]}$trailing';
+        candidate = candidate.substring(0, candidate.length - 1);
+      }
+      final href = normalizeUrl(candidate);
+      if (href == null) return match[0]!;
+      return '[$candidate]($href)$trailing';
+    });
+  }
+
+  static final _linkTokens = RegExp(
+    r'(?<fence>```[\s\S]*?(?:```|$))'
+    r'|(?<code>`[^`\n]*`)'
+    r'|(?<markdown>!?\[[^\]\n]*\]\([^)\s]*\))'
+    r'|(?<url>(?:https?://|www\.)[^\s<>()\[\]]+)'
+    r'|(?<bare>(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+'
+    r'(?:onion|com|org|net|es|io|co|ai|dev|app|info|me|tv|cc|gov|edu|uk|de|'
+    r'fr|it|nl|ru|mx|ar|cl|br|eu|se|no|fi|pl|in|jp|cn|ca|au|ch|at|be|pt|gr|'
+    r'cz|xyz|online|site|shop|store|news|blog|link|live|wiki)'
+    r'(?::\d+)?(?:/[^\s<>()\[\]]*)?)',
+    caseSensitive: false,
+  );
+
   /// Abre el enlace con el navegador predeterminado del sistema.
   Future<bool> openExternal(String url) async {
     final opener = _opener;
