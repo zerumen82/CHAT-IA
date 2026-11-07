@@ -146,6 +146,37 @@ void main() {
     expect(result, isNot(contains('Enlace de Ahmia')));
   });
 
+  test('la portada de Ahmia se pide por la conexión Tor', () async {
+    const home = '<html><body><form id="searchForm">'
+        '<input type="hidden" name="18df05" value="4abde3">'
+        '</form></body></html>';
+    const page = '<html><body><ol class="searchResults">'
+        '<li class="result"><h4><a href="/search/redirect?search_term=x'
+        '&redirect_url=http://gbkxefzhrrjh5prrbhdlbtgnrrubelyukalgct7jesqrv6b3mjtkb5yd.onion/x">'
+        'Foro</a></h4></li></ol></body></html>';
+
+    final paths = <String>[];
+    final client = MockClient((request) async {
+      paths.add(request.url.path);
+      if (request.url.path == '/') {
+        return http.Response(home, 200, headers: {'content-type': 'text/html'});
+      }
+      expect(request.url.queryParameters['18df05'], '4abde3',
+          reason: 'la portada debe pedirse por Tor para obtener el token');
+      return http.Response(page, 200, headers: {'content-type': 'text/html'});
+    });
+
+    final result = await WebSearchService(client: client, cache: AhmiaCache())
+        .search('x', source: 'tor');
+
+    expect(paths.first, '/');
+    expect(
+      result,
+      contains(
+          'gbkxefzhrrjh5prrbhdlbtgnrrubelyukalgct7jesqrv6b3mjtkb5yd.onion/x'),
+    );
+  });
+
   test('detecta cuándo el usuario pide deep web o Tor', () {
     expect(WebSearchService.seemsTorRequest('busca en la deep web'), isTrue);
     expect(WebSearchService.seemsTorRequest('algo de dark web, por favor'),

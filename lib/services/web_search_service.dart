@@ -46,11 +46,12 @@ class AhmiaCache {
   Future<String> getOrFetch(
     Uri url,
     Duration timeout,
-    Future<void>? cancellation,
-  ) async {
+    Future<void>? cancellation, {
+    http.Client? through,
+  }) async {
     if (_isFresh) return _html!;
     try {
-      final html = await _fetch(url, timeout, cancellation);
+      final html = await _fetch(url, timeout, cancellation, through);
       _html = html;
       _fetchedAt = DateTime.now();
       _error = null;
@@ -64,9 +65,10 @@ class AhmiaCache {
   Future<String> _fetch(
     Uri url,
     Duration timeout,
-    Future<void>? cancellation,
-  ) async {
-    final client = _client ?? http.Client();
+    Future<void>? cancellation, [
+    http.Client? through,
+  ]) async {
+    final client = through ?? _client ?? http.Client();
     try {
       final responseFuture = cancellation != null
           ? Future.any<http.Response>([
@@ -82,7 +84,7 @@ class AhmiaCache {
       }
       return response.body;
     } finally {
-      if (_client == null) client.close();
+      if (through == null && _client == null) client.close();
     }
   }
 }
@@ -222,7 +224,9 @@ class WebSearchService {
   static const _ahmiaHost =
       'juhanurmihxlp77nkq76byazcldy2hlmovfu2epvl5ankdibsot4csyd.onion';
 
-  AhmiaCache _cacheFor() => _cache ?? AhmiaCache();
+  AhmiaCache? _ownCache;
+
+  AhmiaCache _cacheFor() => _cache ?? (_ownCache ??= AhmiaCache());
 
   Future<String> _searchTor(
     String query,
@@ -234,32 +238,50 @@ class WebSearchService {
     final httpClient = _torClient(port);
     final cache = _cacheFor();
     try {
-      var token = <String, String>{};
-      try {
-        final html = await cache.getOrFetch(
-            Uri.parse('$_ahmiaBase/'), timeout, cancellation);
-        token = _ahmiaToken(html);
-      } on WebSearchCancelledException {
-        rethrow;
-      } catch (_) {
-        // Sin portada se intenta la búsqueda directa, que puede redirigir.
+      for (var attempt = 1; attempt <= 2; attempt++) {
+        final token =
+            await _ahmiaTokenOrEmpty(cache, httpClient, timeout, cancellation);
+        final uri = Uri.parse('$_ahmiaBase/search/').replace(
+            queryParameters: <String, String>{...token, 'q': query});
+        final results = _parseTorResults(
+            await _get(httpClient, '$uri', timeout, cancellation));
+        if (results.isNotEmpty) {
+          return _formatTor(results, query, 'Ahmia');
+        }
+        // Sin resultados suele ser un token caducado: Ahmia devuelve la
+        // portada en lugar de la búsqueda. Se reintenta con uno nuevo.
+        if (attempt == 2) break;
+        cache.invalidate();
       }
-
-      final uri = Uri.parse('$_ahmiaBase/search/').replace(
-          queryParameters: <String, String>{...token, 'q': query});
-      final results = _parseTorResults(
-          await _get(httpClient, '$uri', timeout, cancellation));
-      if (results.isEmpty) {
-        throw StateError(
-            'Ahmia no devolvió resultados .onion para «$query».');
-      }
-      return _formatTor(results, query, 'Ahmia');
+      throw StateError(
+          'Ahmia no devolvió resultados .onion para «$query».');
     } on TimeoutException {
       throw StateError('La búsqueda en Tor agotó el tiempo de espera.');
     } on SocketException {
       throw StateError('No hay conexión a Tor para buscar.');
     } finally {
       if (_client == null) httpClient.close();
+    }
+  }
+
+  /// Token del formulario de portada, pedido por la conexión Tor: el .onion
+  /// de Ahmia no resuelve por la red normal.
+  Future<Map<String, String>> _ahmiaTokenOrEmpty(
+    AhmiaCache cache,
+    http.Client torClient,
+    Duration timeout,
+    Future<void>? cancellation,
+  ) async {
+    try {
+      final html = await cache.getOrFetch(
+          Uri.parse('$_ahmiaBase/'), timeout, cancellation,
+          through: torClient);
+      return _ahmiaToken(html);
+    } on WebSearchCancelledException {
+      rethrow;
+    } catch (_) {
+      // Sin portada se intenta la búsqueda directa, que puede redirigir.
+      return <String, String>{};
     }
   }
 
