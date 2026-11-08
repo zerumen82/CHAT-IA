@@ -82,4 +82,17 @@ void main() {
         LinkLauncherService.linkifyMarkdown('```text\nhttp://$onion/a\n```'),
         '[http://$onion/a](http://$onion/a)');
   });
+
+  test('destapa los bloques sangrados que solo tienen direcciones', () {
+    const onion =
+        'gbkxefzhrrjh5prrbhdlbtgnrrubelyukalgct7jesqrv6b3mjtkb5yd.onion';
+    expect(
+        LinkLauncherService.linkifyMarkdown(
+            'Resultados:\n\n    http://$onion/foro\n'),
+        'Resultados:\n\n[http://$onion/foro](http://$onion/foro)');
+    expect(LinkLauncherService.linkifyMarkdown('Pasos:\n\n    import os\n'),
+        'Pasos:\n\n    import os\n');
+    expect(LinkLauncherService.linkifyMarkdown('**http://$onion**'),
+        '**[http://$onion](http://$onion)**');
+  });
 }

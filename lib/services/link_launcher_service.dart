@@ -68,31 +68,41 @@ class LinkLauncherService {
   /// forma de abrirlos. El código de verdad no se toca.
   static String linkifyMarkdown(String text) {
     if (!text.contains('.')) return text;
-    return text.replaceAllMapped(_linkTokens, (Match match) {
-      final groups = match as RegExpMatch;
-      final fence = groups.namedGroup('fence');
-      if (fence != null) {
-        return _linkifyFence(fence);
+    final lines = text.split('\n');
+    final out = <String>[];
+    var i = 0;
+    while (i < lines.length) {
+      final line = lines[i];
+      if (line.trimLeft().startsWith('```')) {
+        final fence = <String>[line];
+        i++;
+        while (i < lines.length) {
+          fence.add(lines[i]);
+          final closes = lines[i].trimLeft().startsWith('```');
+          i++;
+          if (closes) break;
+        }
+        final closed =
+            fence.length > 1 && fence.last.trimLeft().startsWith('```');
+        final body =
+            fence.sublist(1, closed ? fence.length - 1 : fence.length);
+        out.addAll(_unveilCode(body, fenced: true) ?? fence);
+        continue;
       }
-      final code = groups.namedGroup('code');
-      if (code != null) {
-        final inner = code.substring(1, code.length - 1).trim();
-        final href = _singleUrl.hasMatch(inner) ? normalizeUrl(inner) : null;
-        return href == null ? code : '[$inner]($href)';
+      if (_isIndented(line) && line.trim().isNotEmpty) {
+        final block = <String>[];
+        while (i < lines.length &&
+            (_isIndented(lines[i]) || lines[i].trim().isEmpty)) {
+          block.add(lines[i]);
+          i++;
+        }
+        out.addAll(_unveilCode(block, fenced: false) ?? block);
+        continue;
       }
-      final raw = groups.namedGroup('url') ?? groups.namedGroup('bare');
-      if (raw == null) return match[0]!;
-      var candidate = raw;
-      var trailing = '';
-      while (candidate.isNotEmpty &&
-          '.,;:!?'.contains(candidate[candidate.length - 1])) {
-        trailing = '${candidate[candidate.length - 1]}$trailing';
-        candidate = candidate.substring(0, candidate.length - 1);
-      }
-      final href = normalizeUrl(candidate);
-      if (href == null) return match[0]!;
-      return '[$candidate]($href)$trailing';
-    });
+      out.add(_linkifyLine(line));
+      i++;
+    }
+    return out.join('\n');
   }
 
   /// Dominios que se reconocen aunque el modelo omita el esquema.
@@ -104,9 +114,8 @@ class LinkLauncherService {
   static final String _domain =
       '(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+($_tlds)(?::\\d+)?';
 
-  static final _linkTokens = RegExp(
-    r'(?<fence>```[\s\S]*?(?:```|$))'
-    '|(?<code>`[^`\\n]*`)'
+  static final _inlineTokens = RegExp(
+    '(?<code>`[^`\\n]*`)'
     '|(?<markdown>!?\\[[^\\]\\n]*\\]\\([^)\\s]*\\))'
     '|(?<url>(?:https?://|www\\.)[^\\s<>()\\[\\]]+)'
     '|(?<bare>$_domain(?:/[^\\s<>()\\[\\]]*)?)',
@@ -119,39 +128,70 @@ class LinkLauncherService {
     caseSensitive: false,
   );
 
-  /// Igual pero exigiendo esquema: un bloque de código solo se destapa si
-  /// contiene direcciones completas, no cualquier línea con puntos.
+  /// Igual pero exigiendo esquema: un bloque con vallas solo se destapa si
+  /// contiene direcciones completas.
   static final _fencedUrl = RegExp(
     r'^(?:https?://|www\.)\S+$',
     caseSensitive: false,
   );
 
-  /// Si un bloque de código solo contiene direcciones, las deja como enlaces.
-  static String _linkifyFence(String fence) {
-    var body = fence.substring(3);
-    if (body.endsWith('```')) {
-      body = body.substring(0, body.length - 3);
-    }
-    var first = true;
+  static bool _isIndented(String line) =>
+      line.startsWith('\t') || line.startsWith('    ');
+
+  /// Linkifica una línea normal, fuera de los bloques de código.
+  static String _linkifyLine(String line) {
+    if (!line.contains('.')) return line;
+    return line.replaceAllMapped(_inlineTokens, (Match match) {
+      final groups = match as RegExpMatch;
+      final code = groups.namedGroup('code');
+      if (code != null) {
+        final inner = code.substring(1, code.length - 1).trim();
+        final href = _singleUrl.hasMatch(inner) ? normalizeUrl(inner) : null;
+        return href == null ? code : '[$inner]($href)';
+      }
+      final raw = groups.namedGroup('url') ?? groups.namedGroup('bare');
+      if (raw == null) return match[0]!;
+      var candidate = raw;
+      var trailing = '';
+      while (candidate.isNotEmpty &&
+          '.,;:!?*'.contains(candidate[candidate.length - 1])) {
+        trailing = '${candidate[candidate.length - 1]}$trailing';
+        candidate = candidate.substring(0, candidate.length - 1);
+      }
+      final href = normalizeUrl(candidate);
+      if (href == null) return match[0]!;
+      return '[$candidate]($href)$trailing';
+    });
+  }
+
+  /// Si el bloque solo tiene direcciones devuelve enlaces sueltos; si es código
+  /// de verdad devuelve null, para no meter `[url](url)` dentro del código
+  /// (se vería tal cual, con corchetes, y sin poder pulsarse).
+  static List<String>? _unveilCode(List<String> block, {required bool fenced}) {
     final urls = <String>[];
-    for (final line in body.split('\n')) {
+    var first = true;
+    for (final line in block) {
       final trimmed = line.trim();
       if (trimmed.isEmpty) continue;
-      if (!_fencedUrl.hasMatch(trimmed)) {
-        if (first) {
+      final pattern = fenced ? _fencedUrl : _singleUrl;
+      if (!pattern.hasMatch(trimmed)) {
+        if (fenced && first) {
           first = false;
-          continue;
+          continue; // etiqueta del lenguaje (```text)
         }
-        return fence;
+        return null;
       }
       first = false;
       urls.add(trimmed);
     }
-    if (urls.isEmpty) return fence;
-    return urls.map((url) {
+    if (urls.isEmpty) return null;
+    final out = <String>[];
+    for (final url in urls) {
+      if (out.isNotEmpty) out.add('');
       final href = normalizeUrl(url);
-      return href == null ? url : '[$url]($href)';
-    }).join('\n\n');
+      out.add(href == null ? url : '[$url]($href)');
+    }
+    return out;
   }
 
   /// Abre el enlace con el navegador predeterminado del sistema.
