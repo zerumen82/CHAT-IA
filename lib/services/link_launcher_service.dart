@@ -138,6 +138,59 @@ class LinkLauncherService {
   static bool _isIndented(String line) =>
       line.startsWith('\t') || line.startsWith('    ');
 
+  /// Separa la puntuación final que no forma parte de la dirección.
+  static (String, String) splitTrailing(String raw) {
+    var candidate = raw;
+    var trailing = '';
+    while (candidate.isNotEmpty &&
+        '.,;:!?*|'.contains(candidate[candidate.length - 1])) {
+      trailing = '${candidate[candidate.length - 1]}$trailing';
+      candidate = candidate.substring(0, candidate.length - 1);
+    }
+    return (candidate, trailing);
+  }
+
+  /// Todos los enlaces que Markdown ha convertido en pulsables.
+  static final _renderedLink = RegExp(r'\]\(\s*([^)\s]+)\s*\)');
+
+  /// Caracteres que cierran una dirección en el texto.
+  static const String _stopChars = '\\s<>()\\[\\]`"\'';
+
+  /// Busca direcciones en crudo, sin mirar la estructura de Markdown: en
+  /// bloques de código, tablas o donde sea.
+  static final _rawUrl = RegExp(
+    '(?:https?://|www\\.)[^$_stopChars]+'
+    '|(?<![a-z0-9-])$_domain(?:/[^$_stopChars]*)?',
+    caseSensitive: false,
+  );
+
+  /// Direcciones que aparecen en el texto, esté escrita como esté.
+  static List<String> extractUrls(String text) {
+    final out = <String>[];
+    final seen = <String>{};
+    for (final match in _rawUrl.allMatches(text)) {
+      final (url, _) = splitTrailing(match[0] ?? '');
+      final href = normalizeUrl(url);
+      if (href == null || !seen.add(href)) continue;
+      out.add(url);
+    }
+    return out;
+  }
+
+  /// Direcciones que Markdown no va a dibujar como enlace pulsable. Se ofrecen
+  /// aparte para que ningún formato deje un enlace fuera de alcance.
+  static List<String> unlinkedUrls(String text) {
+    final shown = <String>{};
+    for (final match in _renderedLink.allMatches(linkifyMarkdown(text))) {
+      final href = normalizeUrl(match.group(1) ?? '');
+      if (href != null) shown.add(href);
+    }
+    return <String>[
+      for (final url in extractUrls(text))
+        if (!shown.contains(normalizeUrl(url))) url,
+    ];
+  }
+
   /// Linkifica una línea normal, fuera de los bloques de código.
   static String _linkifyLine(String line) {
     if (!line.contains('.')) return line;
@@ -151,13 +204,7 @@ class LinkLauncherService {
       }
       final raw = groups.namedGroup('url') ?? groups.namedGroup('bare');
       if (raw == null) return match[0]!;
-      var candidate = raw;
-      var trailing = '';
-      while (candidate.isNotEmpty &&
-          '.,;:!?*'.contains(candidate[candidate.length - 1])) {
-        trailing = '${candidate[candidate.length - 1]}$trailing';
-        candidate = candidate.substring(0, candidate.length - 1);
-      }
+      final (candidate, trailing) = splitTrailing(raw);
       final href = normalizeUrl(candidate);
       if (href == null) return match[0]!;
       return '[$candidate]($href)$trailing';
@@ -169,19 +216,13 @@ class LinkLauncherService {
   /// (se vería tal cual, con corchetes, y sin poder pulsarse).
   static List<String>? _unveilCode(List<String> block, {required bool fenced}) {
     final urls = <String>[];
-    var first = true;
     for (final line in block) {
       final trimmed = line.trim();
       if (trimmed.isEmpty) continue;
       final pattern = fenced ? _fencedUrl : _singleUrl;
-      if (!pattern.hasMatch(trimmed)) {
-        if (fenced && first) {
-          first = false;
-          continue; // etiqueta del lenguaje (```text)
-        }
-        return null;
-      }
-      first = false;
+      // Cualquier otra cosa dentro del bloque es código: no se toca, y los
+      // enlaces que contenga se ofrecen aparte (ver unlinkedUrls).
+      if (!pattern.hasMatch(trimmed)) return null;
       urls.add(trimmed);
     }
     if (urls.isEmpty) return null;

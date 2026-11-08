@@ -83,6 +83,29 @@ void main() {
         '[http://$onion/a](http://$onion/a)');
   });
 
+  test('detecta las direcciones que Markdown deja fuera del texto', () {
+    const onion =
+        'gbkxefzhrrjh5prrbhdlbtgnrrubelyukalgct7jesqrv6b3mjtkb5yd.onion';
+    expect(LinkLauncherService.extractUrls('Mira [el foro](http://$onion/x)'),
+        ['http://$onion/x']);
+    expect(
+        LinkLauncherService.unlinkedUrls('Mira [el foro](http://$onion/x)'),
+        isEmpty);
+    expect(LinkLauncherService.extractUrls('sin enlaces aquí'), isEmpty);
+    expect(
+        LinkLauncherService.extractUrls(
+            'a http://$onion/a y www.ejemplo.com/b'),
+        ['http://$onion/a', 'www.ejemplo.com/b']);
+    expect(
+        LinkLauncherService.unlinkedUrls(
+            '```\nresultado 1\nhttp://$onion/a\n```\nfin'),
+        ['http://$onion/a']);
+    expect(
+        LinkLauncherService.unlinkedUrls(
+            '```\n$onion/foro\n```'),
+        ['$onion/foro']);
+  });
+
   test('destapa los bloques sangrados que solo tienen direcciones', () {
     const onion =
         'gbkxefzhrrjh5prrbhdlbtgnrrubelyukalgct7jesqrv6b3mjtkb5yd.onion';

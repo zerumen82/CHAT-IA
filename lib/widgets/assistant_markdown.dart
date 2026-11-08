@@ -93,14 +93,54 @@ class AssistantMarkdown extends StatelessWidget {
       ),
     );
 
-    return MarkdownBody(
-      // El modelo escribe a veces los dominios a secas; sin esto se ven pero
-      // no se pueden pulsar.
-      data: LinkLauncherService.linkifyMarkdown(text),
-      selectable: false,
-      styleSheet: styleSheet,
-      builders: {'pre': _CodeBlockBuilder(textColor: textColor)},
-      onTapLink: (label, href, title) => _openLink(context, href),
+    // Direcciones que Markdown no dibuja como enlace (bloques de código con
+    // texto alrededor, tablas o formatos raros): se ofrecen pulsables aparte
+    // para que ningún enlace quede fuera de alcance.
+    final unlinked = LinkLauncherService.unlinkedUrls(text);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        MarkdownBody(
+          // El modelo escribe a veces los dominios a secas; sin esto se ven
+          // pero no se pueden pulsar.
+          data: LinkLauncherService.linkifyMarkdown(text),
+          selectable: false,
+          styleSheet: styleSheet,
+          builders: {'pre': _CodeBlockBuilder(textColor: textColor)},
+          onTapLink: (label, href, title) => _openLink(context, href),
+        ),
+        if (unlinked.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Enlaces de la respuesta',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontSize: 12,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 2,
+                  children: [
+                    for (final url in unlinked)
+                      _LinkChip(
+                        url: url,
+                        onTap: () => _openLink(context, url),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 
@@ -131,6 +171,59 @@ class AssistantMarkdown extends StatelessWidget {
         content: Text(message),
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+}
+
+/// Enlace que Markdown no ha podido dibujar en el texto: se ofrece como botón.
+class _LinkChip extends StatelessWidget {
+  final String url;
+  final VoidCallback onTap;
+
+  const _LinkChip({required this.url, required this.onTap});
+
+  String get _label {
+    final parsed = Uri.tryParse(LinkLauncherService.normalizeUrl(url) ?? url);
+    final host = parsed?.host ?? url;
+    final path = parsed?.path ?? '';
+    final full = path.isEmpty || path == '/' ? host : '$host$path';
+    return full.length <= 48 ? full : '${full.substring(0, 47)}…';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: url,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.open_in_new, size: 13, color: colorScheme.primary),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    _label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: colorScheme.primary,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
