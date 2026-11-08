@@ -57,10 +57,29 @@ void main() {
   test('no toca código ni enlaces ya escritos', () {
     expect(LinkLauncherService.linkifyMarkdown('[A](https://amazon.es)'),
         '[A](https://amazon.es)');
-    expect(LinkLauncherService.linkifyMarkdown('`amazon.es`'), '`amazon.es`');
+    expect(LinkLauncherService.linkifyMarkdown('`main.dart`'), '`main.dart`');
+    expect(LinkLauncherService.linkifyMarkdown('`flutter run -d windows`'),
+        '`flutter run -d windows`');
     expect(LinkLauncherService.linkifyMarkdown('```\namazon.es\n```'),
         '```\namazon.es\n```');
     expect(LinkLauncherService.linkifyMarkdown('archivo.txt y Node.js'),
         'archivo.txt y Node.js');
+  });
+
+  test('destapa las direcciones metidas en código', () {
+    const onion =
+        'gbkxefzhrrjh5prrbhdlbtgnrrubelyukalgct7jesqrv6b3mjtkb5yd.onion';
+    expect(LinkLauncherService.linkifyMarkdown('`http://$onion`'),
+        '[http://$onion](http://$onion)');
+    expect(LinkLauncherService.linkifyMarkdown('`$onion/foro`'),
+        '[$onion/foro](http://$onion/foro)');
+    expect(
+        LinkLauncherService.linkifyMarkdown(
+            '```\nhttp://$onion/a\nhttp://$onion/b\n```'),
+        '[http://$onion/a](http://$onion/a)\n\n'
+        '[http://$onion/b](http://$onion/b)');
+    expect(
+        LinkLauncherService.linkifyMarkdown('```text\nhttp://$onion/a\n```'),
+        '[http://$onion/a](http://$onion/a)');
   });
 }

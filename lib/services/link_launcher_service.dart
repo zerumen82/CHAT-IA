@@ -61,11 +61,25 @@ class LinkLauncherService {
   /// Convierte en enlaces los dominios que el modelo escribe a secas
   /// («amazon.es/dp/x», «abc.onion»): Markdown solo autoenlaza `http(s)://` y
   /// `www.`, así que sin esto el texto se ve pero no se puede pulsar.
-  /// Respeta bloques de código, código en línea y enlaces ya escritos.
+  ///
+  /// También destapa las direcciones que el modelo encierra en código
+  /// (`http://…`) o en un bloque que solo contiene direcciones, que es como
+  /// suele escribir los enlaces .onion: si no, se ven como código y no hay
+  /// forma de abrirlos. El código de verdad no se toca.
   static String linkifyMarkdown(String text) {
     if (!text.contains('.')) return text;
     return text.replaceAllMapped(_linkTokens, (Match match) {
       final groups = match as RegExpMatch;
+      final fence = groups.namedGroup('fence');
+      if (fence != null) {
+        return _linkifyFence(fence);
+      }
+      final code = groups.namedGroup('code');
+      if (code != null) {
+        final inner = code.substring(1, code.length - 1).trim();
+        final href = _singleUrl.hasMatch(inner) ? normalizeUrl(inner) : null;
+        return href == null ? code : '[$inner]($href)';
+      }
       final raw = groups.namedGroup('url') ?? groups.namedGroup('bare');
       if (raw == null) return match[0]!;
       var candidate = raw;
@@ -81,18 +95,64 @@ class LinkLauncherService {
     });
   }
 
+  /// Dominios que se reconocen aunque el modelo omita el esquema.
+  static const String _tlds = 'onion|com|org|net|es|io|co|ai|dev|app|info|me|'
+      'tv|cc|gov|edu|uk|de|fr|it|nl|ru|mx|ar|cl|br|eu|se|no|fi|pl|in|jp|cn|'
+      'ca|au|ch|at|be|pt|gr|cz|xyz|online|site|shop|store|news|blog|link|'
+      'live|wiki';
+
+  static final String _domain =
+      '(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+($_tlds)(?::\\d+)?';
+
   static final _linkTokens = RegExp(
     r'(?<fence>```[\s\S]*?(?:```|$))'
-    r'|(?<code>`[^`\n]*`)'
-    r'|(?<markdown>!?\[[^\]\n]*\]\([^)\s]*\))'
-    r'|(?<url>(?:https?://|www\.)[^\s<>()\[\]]+)'
-    r'|(?<bare>(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+'
-    r'(?:onion|com|org|net|es|io|co|ai|dev|app|info|me|tv|cc|gov|edu|uk|de|'
-    r'fr|it|nl|ru|mx|ar|cl|br|eu|se|no|fi|pl|in|jp|cn|ca|au|ch|at|be|pt|gr|'
-    r'cz|xyz|online|site|shop|store|news|blog|link|live|wiki)'
-    r'(?::\d+)?(?:/[^\s<>()\[\]]*)?)',
+    '|(?<code>`[^`\\n]*`)'
+    '|(?<markdown>!?\\[[^\\]\\n]*\\]\\([^)\\s]*\\))'
+    '|(?<url>(?:https?://|www\\.)[^\\s<>()\\[\\]]+)'
+    '|(?<bare>$_domain(?:/[^\\s<>()\\[\\]]*)?)',
     caseSensitive: false,
   );
+
+  /// Una sola dirección, sin espacios: para destapar código en línea.
+  static final _singleUrl = RegExp(
+    '^(?:(?:https?://|www\\.)\\S+|$_domain(?:/\\S*)?)\$',
+    caseSensitive: false,
+  );
+
+  /// Igual pero exigiendo esquema: un bloque de código solo se destapa si
+  /// contiene direcciones completas, no cualquier línea con puntos.
+  static final _fencedUrl = RegExp(
+    r'^(?:https?://|www\.)\S+$',
+    caseSensitive: false,
+  );
+
+  /// Si un bloque de código solo contiene direcciones, las deja como enlaces.
+  static String _linkifyFence(String fence) {
+    var body = fence.substring(3);
+    if (body.endsWith('```')) {
+      body = body.substring(0, body.length - 3);
+    }
+    var first = true;
+    final urls = <String>[];
+    for (final line in body.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      if (!_fencedUrl.hasMatch(trimmed)) {
+        if (first) {
+          first = false;
+          continue;
+        }
+        return fence;
+      }
+      first = false;
+      urls.add(trimmed);
+    }
+    if (urls.isEmpty) return fence;
+    return urls.map((url) {
+      final href = normalizeUrl(url);
+      return href == null ? url : '[$url]($href)';
+    }).join('\n\n');
+  }
 
   /// Abre el enlace con el navegador predeterminado del sistema.
   Future<bool> openExternal(String url) async {
